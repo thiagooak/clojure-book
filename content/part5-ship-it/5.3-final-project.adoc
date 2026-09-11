@@ -1,0 +1,79 @@
+[#ch-5-3-final-project]
+= Final Project: Continuous Deployment
+
+Every deploy of `reading-list` so far — <<ch-1-3-hello-production,1.3>>, <<ch-3-4-project-checkpoint-web-api,3.4>> — has been you, at a terminal, running `clojure -T:build ci` and then `fly deploy` by hand. That's the right way to learn what those commands actually do. It's the wrong way to ship software for real: a person has to remember to run tests before deploying, has to remember the right commands in the right order, and nothing stops a broken build from reaching production except discipline. This final chapter automates that discipline away with a real CI/CD pipeline, then closes the book by looking at where you'd go next.
+
+== What CI/CD buys you
+
+*Continuous Integration* means every change is automatically tested the moment it's proposed — no one has to remember to run `clojure -T:build test` locally before it matters. *Continuous Deployment* means a change that passes CI on the main branch is automatically shipped, with no separate manual "now deploy it" step. Together, the workflow becomes: push a commit, and either it's live within a few minutes, or you get told exactly why it wasn't.
+
+== A GitHub Actions pipeline for `reading-list`
+
+`reading-list` doesn't have a git repository of its own yet in this book's examples — if you've been following along, `git init` it now, alongside a `.github/workflows/deploy.yml`:
+
+[source,yaml]
+----
+name: Test and deploy reading-list
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+
+      - name: Run tests
+        run: clojure -T:build test
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+----
+
+Reading it top to bottom:
+
+* `on: push`/`pull_request` — this runs on every pull request (so a broken change gets flagged before it's even merged) and every push to `main`.
+* The `test` job installs the Clojure CLI (via the community `setup-clojure` action, the same tool you've had locally since <<ch-0-2-install,0.2>>) and runs exactly the `clojure -T:build test` task from `build.clj`, unchanged from what `ci` itself calls internally (see <<ch-4-5-tooling-deep-dive,Tooling Deep Dive>>).
+* The `deploy` job declares `needs: test` — it will not run at all if the test job fails — and further restricts itself with `if:` to only actual pushes to `main`, not every pull request. A PR from a branch gets tested; only a merge to `main` gets deployed.
+* `flyctl deploy` is the exact same command from <<ch-1-3-hello-production,1.3>>, just run by GitHub's servers instead of your terminal. It rebuilds the Docker image (the very same multi-stage `Dockerfile` from 1.3, unchanged, per that chapter's own `Dockerfile`) using Fly.io's remote builders (`--remote-only`, so the CI runner itself doesn't need Docker installed), and ships it.
+* `secrets.FLY_API_TOKEN` — generated once with `fly tokens create deploy`, and stored in the repository's *Settings → Secrets and variables → Actions*, never committed to source. This is exactly the environment-variable-for-secrets pattern from <<ch-5-1-hardening,Hardening for Production>>, applied to the deploy credential itself.
+
+From here, the loop closes: push a commit, GitHub runs your tests, and if they pass, your change is live on Fly.io a few minutes later — no terminal command from you required at all.
+
+== Retrospective: two threads, one book
+
+This book ran two projects side by side, deliberately kept separate, as <<ch-2-7-project-checkpoint,2.7>> first explained: `reading-list` (Thread A) proved you could get something *shipped* — live, on the internet, redeployed twice as it grew real functionality — while `guess` (Thread B) proved you could *build* something correct and well-tested without the ceremony of a deployed service around it. Real Clojure work is usually some mix of both instincts: ship something small and real early, and build the muscle of correctness and design alongside it, rather than treating either as a prerequisite for the other.
+
+== Where to go next
+
+This book stops at a genuinely useful, deployed, tested web service — not because Clojure's story ends here, but because everything past this point branches in directions specific enough that they deserve their own dedicated resources rather than a rushed chapter each:
+
+* **A real frontend.** `reading-list` is an API with no UI. https://clojurescript.org/[ClojureScript] compiles the same language you've been writing to JavaScript, and https://github.com/reagent-project/reagent[Reagent] (a thin wrapper over React) is the most common way to build a UI with it — the same immutable-data, functional habits from this book, aimed at the browser instead of the JVM.
+* **A real database.** `reading-list`'s atom-backed store has been intentionally simple, and loses everything on restart. https://www.datomic.com/[Datomic] is Clojure's most distinctive answer to persistence — an immutable, time-aware database that treats facts the way this book has treated values: never mutated, only added to. For something more conventional, `next.jdbc` (Sean Corfield's modern JDBC library) connects to any ordinary SQL database using the same data-oriented style you've used throughout.
+* **Distributed systems.** <<ch-4-1-concurrency,Concurrency>> deliberately scoped `core.async` out of this book. It's the natural next stop for coordinating work across many concurrent processes on one machine — and from there, message queues (Kafka, or Clojure-native tools like https://github.com/juxt/site[JUXT's]) and multi-service architectures are where a single `reading-list`-style service usually grows into next.
+
+None of these need you to unlearn anything from this book — every one of them is built on exactly the same values, functions, immutability, and REPL-driven habits you've been practicing since <<ch-1-1-hello-repl,1.1>>.
+
+== Try it yourself
+
+* Actually set up the GitHub Actions workflow above against a real fork of `reading-list`, generate a `FLY_API_TOKEN`, and push a small change — watch it test and deploy itself.
+* Add a step to the `test` job that also runs `clojure -M:test` (the more verbose direct invocation from <<ch-3-3-testing,Testing>>) and compare its output to `clojure -T:build test`'s.
+* Pick one of the three "where to go next" directions and spend an hour reading its official getting-started guide — which of this book's habits (REPL-driven development, `deps.edn`, immutable values) carried over directly, and which didn't?

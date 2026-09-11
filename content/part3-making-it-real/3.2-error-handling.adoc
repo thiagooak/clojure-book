@@ -1,0 +1,124 @@
+[#ch-3-2-error-handling]
+= Error Handling & Reading Stack Traces
+
+You saw the basics of `try`/`catch`/`finally` and `ex-info`/`ex-data` briefly in <<ch-2-5-flow-control,Flow Control>>. This chapter goes deeper on both handling errors deliberately and — just as importantly — reading the error output Clojure hands you when you haven't handled one at all. Clojure's stack traces have a reputation among newcomers for being noisy and hard to parse. They're not actually that bad once you know which lines matter; this chapter is about building that skill directly, the way you'd deliberately practice reading a compiler error, rather than treating a wall of red text as something to route around by guessing.
+
+== Reading an unhandled exception
+
+Break something on purpose. In a fresh REPL:
+
+[source,clojure-repl]
+----
+user=> (/ 1 0)
+Execution error (ArithmeticException) at user/eval1 (REPL:1).
+Divide by zero
+----
+
+Two lines, and both matter:
+
+* **Line 1** — the *what* and *where*: the exception's Java class (`ArithmeticException`), roughly where it happened (`user/eval1`, since this was typed straight at the REPL rather than loaded from a file), and the location (`REPL:1`, meaning REPL input line 1).
+* **Line 2** — the exception's message: `Divide by zero`.
+
+That's the abbreviated form the Clojure CLI prints by default — deliberately short, because a full JVM stack trace for even a trivial error can run to dozens of lines, most of them internal to the Clojure compiler and irrelevant to your bug. If you need the full trace, the CLI also tells you where to find it:
+
+[source,clojure-repl]
+----
+user=> (/ 1 0)
+Execution error (ArithmeticException) at user/eval1 (REPL:1).
+Divide by zero
+
+Full report at:
+/tmp/clojure-11353784799414803173.edn
+----
+
+That file is plain https://clojure.org/reference/reader#_extensible_data_notation_edn[EDN] data (a Clojure-native data format — think of it as Clojure's answer to JSON) containing the complete, unabridged stack trace and exception data, in case the short version doesn't tell you enough.
+
+Usually it does. Here's a more realistic one — a function three calls deep that chokes on unexpected `nil`:
+
+[source,clojure-repl]
+----
+user=> (defn total [items]
+         (reduce + (map :price items)))
+#'user/total
+user=> (total [{:price 10} {:price nil}])
+Execution error (NullPointerException) at user/total (REPL:3).
+Cannot invoke "Object.getClass()" because "x" is null
+----
+
+`at user/total (REPL:3)` tells you exactly which function and which line the error surfaced in — `total`, defined on the REPL's third line of input. The message itself comes from the JVM (modern JDKs generate these "helpful NullPointerExceptions" automatically) and, once you're used to the phrasing, is telling you plainly: something you tried to call a method on was `nil`. In this case, `+` tried to add `nil` (the missing `:price`) to a number and the underlying arithmetic couldn't cope. The fix is a data problem, not a syntax problem: either guard against missing prices before summing, or decide what a missing price should default to.
+
+== Printing the full trace at the REPL
+
+If the one-line summary isn't enough — you need to see exactly which frames were on the call stack — catch the exception yourself and use `clojure.repl/pst` ("print stack trace"):
+
+[source,clojure-repl]
+----
+user=> (require '[clojure.repl :refer [pst]])
+nil
+user=> (try
+         (/ 1 0)
+         (catch Exception e
+           (pst e 8)))
+ArithmeticException Divide by zero
+	clojure.lang.Numbers.divide (Numbers.java:190)
+	clojure.lang.Numbers.divide (Numbers.java:3915)
+	user/eval3 (NO_SOURCE_FILE:4)
+	user/eval3 (NO_SOURCE_FILE:3)
+	clojure.lang.Compiler.eval (Compiler.java:7757)
+	clojure.lang.Compiler.eval (Compiler.java:7712)
+	clojure.core/eval (core.clj:3236)
+	clojure.main/eval-opt (main.clj:489)
+----
+
+The `8` limits it to 8 frames — without a limit, `pst` prints the whole trace, which quickly runs into Clojure/JVM internals that aren't useful to you. In practice, the first one or two frames of your own code are almost always the ones worth reading; everything below `clojure.lang.Compiler.eval` is the runtime itself getting your code to execute, not a clue about your bug.
+
+== `ex-info` and `ex-data`, properly
+
+Java's built-in exceptions only carry a string message. Clojure programs frequently need to carry *structured* information about what went wrong — which record failed validation, what value was out of range — so that calling code can react to it programmatically instead of parsing an error string. That's what `ex-info` is for: an exception that carries an arbitrary map alongside its message.
+
+[source,clojure-repl]
+----
+user=> (defn validate-age [age]
+         (when (neg? age)
+           (throw (ex-info "Age cannot be negative" {:age age})))
+         age)
+#'user/validate-age
+user=> (try
+         (validate-age -5)
+         (catch Exception e
+           (println "Message:" (ex-message e))
+           (println "Data:" (ex-data e))))
+Message: Age cannot be negative
+Data: {:age -5}
+nil
+----
+
+`ex-message` and `ex-data` (both built into `clojure.core` since Clojure 1.10) are the tidy way to pull the pieces back apart — `ex-message` works on any exception, `ex-data` returns the attached map for an `ex-info`-created exception and `nil` for anything else:
+
+[source,clojure-repl]
+----
+user=> (try
+         (/ 1 0)
+         (catch ArithmeticException e
+           (println "Message:" (ex-message e))
+           (println "Data:" (ex-data e))))
+Message: Divide by zero
+Data: nil
+nil
+----
+
+That `nil` is a useful signal in its own right: it tells you this exception wasn't one your own code deliberately raised with structured context, so there's nothing more specific to inspect than the message.
+
+== A rule of thumb for when to reach for `ex-info`
+
+Throw a plain `Exception` (or let a built-in one like `ArithmeticException` propagate) when the failure is unexpected — a genuine bug or an environment problem you're not really trying to handle gracefully. Reach for `ex-info` when the failure is an *expected*, nameable condition your own code wants calling code to be able to inspect and branch on — invalid input, a business rule violation, a missing resource. You'll use exactly this pattern for input validation in <<ch-3-4-project-checkpoint-web-api,3.4>>'s web API.
+
+== A note on spec
+
+Once your data shapes get more complex than a function's argument list can self-document, you'll likely reach for https://clojure.org/guides/spec[`clojure.spec`], a core library for describing and validating data shapes, which produces its own distinctly-formatted (and, at first glance, even more intimidating) error output when validation fails. It's outside this book's scope — the https://clojure.org/guides/spec[official spec guide] is the right place to learn it — but now that you're comfortable reading an ordinary exception's *what*, *where*, and attached data, you already have the core skill you need to pick apart a spec error report too.
+
+== Try it yourself
+
+* Trigger a `ClassCastException` on purpose (hint: try to use a number where a function expects a collection) and read the message it produces.
+* Rewrite `validate-age` so it also rejects ages over `150`, with a distinct `:reason` key in the `ex-info` map for each kind of failure (`:negative` vs. `:too-large`), and write a `catch` block that prints a different message depending on `:reason`.
+* Wrap a risky operation (like parsing a number from user input) in `try`/`catch`, and use `finally` to print `"done"` regardless of whether it succeeded.

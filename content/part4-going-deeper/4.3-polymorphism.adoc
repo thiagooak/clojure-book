@@ -1,0 +1,114 @@
+[#ch-4-3-polymorphism]
+= Polymorphism
+
+<<ch-2-4-hashed-collections,Hashed Collections>> introduced records as "an alternative to maps... with a named type, which can be used for polymorphic behavior — more on that later." This is later. Records earn their keep specifically when you want different implementations of the same set of operations to be swappable — the classic object-oriented promise, achieved in Clojure without classes or inheritance.
+
+== Protocols
+
+A protocol declares a set of function signatures — an interface, in spirit, though implemented very differently under the hood than a Java interface. Recall `reading-list`'s storage from <<ch-3-4-project-checkpoint-web-api,3.4>>: bookmarks live in one hardcoded atom. That's fine for the book, but suppose you wanted to swap in a different storage backend later — a real database in production, something that just prints what it *would* do while testing. A protocol names the operations any storage backend needs to support, without committing to how:
+
+[source,clojure]
+----
+(defprotocol Storage
+  (store! [this bookmark])
+  (fetch-all [this]))
+----
+
+Now define two different implementations with `defrecord`, each providing its own version of both functions:
+
+[source,clojure]
+----
+(defrecord AtomStorage [state]
+  Storage
+  (store! [_ bookmark]
+    (swap! state conj bookmark)
+    bookmark)
+  (fetch-all [_]
+    @state))
+
+(defrecord PrintingStorage []
+  Storage
+  (store! [_ bookmark]
+    (println "Would store:" bookmark)
+    bookmark)
+  (fetch-all [_]
+    (println "Would fetch all bookmarks")
+    []))
+----
+
+`AtomStorage` wraps an atom (the same tool from <<ch-3-1-state-and-identity,State & Identity>>) and really stores things. `PrintingStorage` doesn't store anything at all — it just announces what it would have done, which makes it a handy stand-in while testing code that needs *some* storage without wanting to set up a real one.
+
+Code that uses `Storage` doesn't need to know which implementation it's holding:
+
+[source,clojure-repl]
+----
+user=> (defn save-bookmark [storage bookmark]
+         (store! storage bookmark))
+#'user/save-bookmark
+user=> (def real-storage (->AtomStorage (atom [])))
+#'user/real-storage
+user=> (save-bookmark real-storage {:url "https://clojure.org" :title "Clojure"})
+{:url https://clojure.org, :title Clojure}
+user=> (fetch-all real-storage)
+[{:url https://clojure.org, :title Clojure}]
+user=> (def fake-storage (->PrintingStorage))
+#'user/fake-storage
+user=> (save-bookmark fake-storage {:url "https://clojure.org" :title "Clojure"})
+Would store: {:url https://clojure.org, :title Clojure}
+{:url https://clojure.org, :title Clojure}
+----
+
+`save-bookmark` is written entirely against the `Storage` protocol — it has no idea, and doesn't need to, whether it's holding an `AtomStorage` or a `PrintingStorage`. This is the payoff: swap the record you pass in, and the behavior changes completely, with zero changes to `save-bookmark` itself.
+
+This is also, roughly, what `reitit-ring` and `ring-json` are doing under the hood when you plug them into `reading-list` — Ring's whole handler convention is a form of this same idea, just without a named protocol: any function with the right shape is interchangeable.
+
+== Multimethods: dispatch on anything, not just type
+
+Protocols dispatch on the type of the first argument — which record or type you handed in. Sometimes you want to dispatch on something else entirely — a value inside the data, not the data's type. That's what `defmulti`/`defmethod` are for:
+
+[source,clojure-repl]
+----
+user=> (defmulti area :shape)
+#'user/area
+user=> (defmethod area :circle [{:keys [radius]}]
+         (* Math/PI radius radius))
+#object[...]
+user=> (defmethod area :rectangle [{:keys [width height]}]
+         (* width height))
+#object[...]
+user=> (area {:shape :circle :radius 2})
+12.566370614359172
+user=> (area {:shape :rectangle :width 3 :height 4})
+12
+----
+
+`(defmulti area :shape)` says: to figure out which `area` implementation to run, call `:shape` on the argument (recall from <<ch-2-4-hashed-collections,Hashed Collections>> that keywords are themselves functions that look themselves up in a map) and dispatch on the result. Each `defmethod` registers an implementation for one particular dispatch value. Unlike a protocol, there's no shared record type at all here — just plain maps, dispatched on whatever key you choose.
+
+Handle the case nobody registered a `defmethod` for with `:default`:
+
+[source,clojure-repl]
+----
+user=> (defmethod area :default [shape]
+         (throw (ex-info "Unknown shape" {:input shape})))
+#object[...]
+user=> (try
+         (area {:shape :triangle})
+         (catch Exception e
+           (println "Caught:" (ex-message e) (ex-data e))))
+Caught: Unknown shape {:input {:shape :triangle}}
+nil
+----
+
+That's the `ex-info`/`ex-data` pattern from <<ch-3-2-error-handling,Error Handling>> again — an unmatched shape doesn't crash the program with an opaque error, it raises a specific, inspectable failure that calling code (or a test) can check for.
+
+== Which one do I reach for?
+
+* **A handful of functions, one clear "kind" per value, and you're often creating new instances of that kind** (a bookmark, a storage backend, a shape record) — a **record implementing a protocol**.
+* **Dispatch logic based on some value *inside* plain data you don't control the shape of** (a `:type` or `:shape` key on an incoming map, say from an external API) — a **multimethod**.
+* **Just one implementation, ever, no swapping planned** — a plain function. Don't reach for either of the above until you actually have more than one thing to be polymorphic *over* — `reading-list`'s `store.clj` in <<ch-3-4-project-checkpoint-web-api,3.4>> is intentionally still a plain namespace of functions, not a protocol, because the book never actually needed a second storage backend.
+
+== Try it yourself
+
+* Add a third `Storage` implementation — `FileStorage`, backed by a plain text file via `slurp`/`spit` — and confirm `save-bookmark` works against it unchanged.
+* Add a `:triangle` `defmethod` to `area` (Heron's formula, or just `0.5 * base * height` if you pass those keys instead), and confirm the `:default` case is no longer triggered for it.
+* Rewrite the `area` multimethod as a protocol instead, with each shape as its own record. What has to change about how callers construct a shape, now that "which shape" is the record's type rather than a `:shape` key in a plain map?

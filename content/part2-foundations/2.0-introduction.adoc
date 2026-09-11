@@ -1,0 +1,28 @@
+////
+Adapted from clojure.org's "Learn Clojure" guide, content/guides/learn/clojure.adoc.
+© Rich Hickey and contributors (original author: Alex Miller). Licensed under
+the Eclipse Public License 1.0. Source: https://github.com/clojure/clojure-site.
+See NOTICE.md for what changed.
+////
+[#ch-2-0-introduction]
+= Foundations
+
+Welcome to Clojure!
+
+This part is a gentle introduction to the basics of Clojure. It's intended
+to be read in order — later pages build on material from earlier ones.
+Each page ends with a few exercises.
+
+By this point in the book you've already deployed something real (Part 1)
+— this part is where you build the vocabulary to understand what you just
+shipped, and to start changing it on purpose instead of by trial and
+error.
+
+This part covers:
+
+* <<ch-2-1-syntax,Syntax>>
+* <<ch-2-2-functions,Functions>>
+* <<ch-2-3-sequential-collections,Sequential Collections>>
+* <<ch-2-4-hashed-collections,Hashed Collections>>
+* <<ch-2-5-flow-control,Flow Control>>
+* <<ch-2-6-namespaces,Namespaces>>

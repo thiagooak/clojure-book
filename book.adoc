@@ -1,0 +1,96 @@
+= The Clojure Book
+:doctype: book
+:toc: left
+:toclevels: 2
+:sectnums:
+:sectanchors:
+:source-highlighter: rouge
+:experimental:
+
+// Master document. Each chapter file is written with its own top-level
+// `= Title` so it's a valid standalone AsciiDoc document on its own
+// (readable/previewable in isolation). To make that work inside a book,
+// we write a real `= Part N: ...` heading here for each part, then include
+// that part's chapters with a per-include `leveloffset=+1` attribute so
+// each chapter's `=` shifts down to `==` and nests under the part, instead
+// of every chapter file trying to be its own book part.
+//
+// NB: use the per-include `leveloffset=+1` attribute (not a standalone
+// `:leveloffset: +1` / `:leveloffset: 0` document-attribute pair) — in
+// this Asciidoctor version, resetting the global `:leveloffset:` attribute
+// between parts does not actually restore level 0, which demotes every
+// subsequent `= Part N` heading into a chapter nested under the previous
+// part instead of a sibling part. The per-include attribute is scoped to
+// that include only, so it doesn't leak into later headings.
+
+= Part 0: Before You Start
+
+include::content/part0-before-you-start/0.1-who-this-is-for.adoc[leveloffset=+1]
+
+include::content/part0-before-you-start/0.2-install.adoc[leveloffset=+1]
+
+= Part 1: Your First Deploy
+
+include::content/part1-first-win/1.1-hello-repl.adoc[leveloffset=+1]
+
+include::content/part1-first-win/1.2-hello-program.adoc[leveloffset=+1]
+
+include::content/part1-first-win/1.3-hello-production.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.0-introduction.adoc[]
+
+include::content/part2-foundations/2.1-syntax.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.2-functions.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.3-sequential-collections.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.4-hashed-collections.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.5-flow-control.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.6-namespaces.adoc[leveloffset=+1]
+
+include::content/part2-foundations/2.7-project-checkpoint.adoc[leveloffset=+1]
+
+include::content/part2-foundations/answers.adoc[leveloffset=+1]
+
+= Part 3: Making It Real
+
+include::content/part3-making-it-real/3.1-state-and-identity.adoc[leveloffset=+1]
+
+include::content/part3-making-it-real/3.2-error-handling.adoc[leveloffset=+1]
+
+include::content/part3-making-it-real/3.3-testing.adoc[leveloffset=+1]
+
+include::content/part3-making-it-real/3.4-project-checkpoint-web-api.adoc[leveloffset=+1]
+
+= Part 4: Going Deeper
+
+include::content/part4-going-deeper/4.1-concurrency.adoc[leveloffset=+1]
+
+include::content/part4-going-deeper/4.2-java-interop.adoc[leveloffset=+1]
+
+include::content/part4-going-deeper/4.3-polymorphism.adoc[leveloffset=+1]
+
+include::content/part4-going-deeper/4.4-macros.adoc[leveloffset=+1]
+
+include::content/part4-going-deeper/4.5-tooling-deep-dive.adoc[leveloffset=+1]
+
+= Part 5: Ship It For Real
+
+include::content/part5-ship-it/5.1-hardening-for-production.adoc[leveloffset=+1]
+
+include::content/part5-ship-it/5.2-packaging-and-deploy-options.adoc[leveloffset=+1]
+
+include::content/part5-ship-it/5.3-final-project.adoc[leveloffset=+1]
+
+= Appendices
+
+include::content/appendices/a-editor-setup.adoc[leveloffset=+1]
+
+include::content/appendices/b-glossary.adoc[leveloffset=+1]
+
+include::content/appendices/c-further-reading.adoc[leveloffset=+1]
+
+include::content/appendices/d-contributing-to-this-book.adoc[leveloffset=+1]

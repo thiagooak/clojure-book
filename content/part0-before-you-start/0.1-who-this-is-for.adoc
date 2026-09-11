@@ -1,0 +1,34 @@
+[#ch-0-1-who-this-is-for]
+= Who This Book Is For, and How to Read It
+
+This book assumes you've written code before — in Python, JavaScript, Java, Ruby, Go, C#, whatever. It does not assume you've used a Lisp, and it does not assume you know what "functional programming" means beyond having heard the phrase. If terms like _persistent data structure_, _REPL_, or _immutability_ are new to you, that's fine; that's exactly what this book is for.
+
+If you've never programmed at all, this probably isn't the right first book. Not because Clojure is a bad first language — reasonable people disagree about that — but because this book moves quickly through things like variables, loops, and functions on the assumption that you already have working intuitions for them from somewhere else, and just need to see how Clojure reshapes those intuitions.
+
+== The promise
+
+Most programming books — and most programming _languages'_ own documentation — teach you the language first and deployment last, if at all. You spend weeks or months accumulating syntax and concepts before you ever see your code running anywhere other than your own laptop. That gap is where a lot of people quietly give up. It's hard to stay motivated learning the difference between a vector and a list when you have no idea what any of it is _for_ yet.
+
+This book inverts that order. By the end of Part 1 — realistically, under an hour from opening this page — you will have a small Clojure program running at a real URL on the public internet, deployed the same way you'd deploy anything you build later. You will not understand most of the language yet. That's fine. The goal of Part 1 isn't understanding; it's proof that the whole path — write code, run it, ship it — works, and works for you, specifically, on your machine, today.
+
+Everything after that is the same project, growing up. You won't build three separate toy examples and then abandon them. You'll keep coming back to the one program you deployed in Part 1, adding to it as each new chapter gives you a new tool: state in <<ch-3-1-state-and-identity,Part 3>>, a real web API and tests later in that same part, concurrency and Java interop in Part 4, and a production-grade deploy pipeline in Part 5. Each addition gets redeployed. You should never go more than a couple of chapters without pushing a change live and watching it work.
+
+There is a second, smaller project too — a self-contained command-line tool at the end of Part 2 — but it exists purely to give you a checkpoint for consolidating what Part 2 teaches. It does not get deployed, and it does not become part of the main project. Two threads, two different jobs: one proves you can ship, the other proves you can build.
+
+== How this book is organized
+
+* **Part 0** (this part) — setup, so the rest of the book doesn't stall on tool installation.
+* **Part 1** — your first deploy, before you know the language.
+* **Part 2** — the foundations of Clojure itself: syntax, data, functions, flow control, namespaces. This is the part that looks like a "normal" language book, and it's adapted from clojure.org's own "Learn Clojure" guide.
+* **Part 3** — the ideas that make Clojure programs different from what you're used to: how state works without mutation, how errors are handled, how testing fits into a REPL-driven workflow. You'll use all of it to grow the Part 1 project into a real (if small) web service.
+* **Part 4** — depth: concurrency, Java interop, polymorphism, macros, and a closer look at the tooling you've been using on faith since Part 1.
+* **Part 5** — hardening the project for production for real: configuration, logging, packaging choices, and a proper CI/CD pipeline, followed by a look at where to go once you finish this book.
+* **Appendices** — editor setup instructions, a glossary, further reading, and how to contribute back to this book.
+
+== How to actually read it
+
+Open a REPL before you read past this sentence. Seriously — go to <<ch-0-2-install,0.2>> if you haven't installed one yet, or straight to <<ch-1-1-hello-repl,1.1>> if you already have.
+
+This book is written to be typed, not read. Every code block that shows a `user=>` prompt is meant to be entered into your own running REPL as you go, not just visually scanned. You will learn Clojure faster by watching it respond to your own typos than by reading someone else's correct code. When a block doesn't have a `user=>` prompt, it's a file's contents — put it in the file the surrounding text names, not into the REPL.
+
+Skipping around is fine once you've finished Part 1. The foundations in Part 2 are meant to be read in order the first time through, since each section leans on the last, but once you've been through it once, treat it as a reference to jump back into.

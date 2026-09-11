@@ -1,0 +1,57 @@
+[#ch-a-editor-setup]
+= Appendix: Editor & REPL Setup
+
+<<ch-0-2-install,0.2>> got you moving quickly with Calva, and <<ch-1-1-hello-repl,1.1>> pointed here for Cursive and CIDER. This appendix is the complete reference for all three — install, start a project REPL, and evaluate a form — so you can pick whichever fits the editor you already live in.
+
+Whichever one you choose, the workflow is the same shape everywhere: start (or connect to) a REPL process from inside your editor, then send individual expressions from a file to that running process as you write them, rather than re-running the whole file from scratch on every change. That habit matters far more than which of the three you pick.
+
+== Calva (Visual Studio Code)
+
+Calva is this book's lead recommendation — free, actively maintained, and the fastest path to a working, editor-connected REPL for someone new to Clojure.
+
+*Install*:
+
+. Install https://code.visualstudio.com/[Visual Studio Code] if you don't already have it.
+. Open the Extensions panel (`Cmd/Ctrl+Shift+X`) and install **Calva**.
+
+*Start a project REPL*: open your project's folder in VS Code (the one containing `deps.edn`), open the Command Palette (`Cmd/Ctrl+Shift+P`), and run **"Calva: Start a Project REPL and Connect"**. Calva reads your `deps.edn`, may ask which alias(es) to launch with (pick none, or `:test`, depending on what you're working on), and opens a REPL window connected to that project.
+
+*Evaluate a form*: open any `.clj` file, place your cursor anywhere inside or at the end of an expression, and press `Ctrl+Enter` (`Cmd+Enter` on some keybinding layouts — Calva's own "alt+enter"/"ctrl+enter" defaults have shifted across versions, so check the Command Palette's "Calva: Evaluate..." entries if the default doesn't fire). The result appears inline, right next to your cursor, and also in the output pane. `Ctrl+Alt+Enter` evaluates the current top-level form even if your cursor is nested deep inside it — the one you'll use most often once you're editing real functions instead of one-line expressions.
+
+*Loading a whole file*: **"Calva: Load/Evaluate Current File and its Requires"** (also in the Command Palette) re-evaluates everything in the file you're looking at, useful right after pulling changes or switching branches.
+
+== Cursive (IntelliJ IDEA)
+
+Cursive is a mature, commercial (free for non-commercial use) Clojure plugin for IntelliJ IDEA, popular with developers already comfortable in JetBrains editors.
+
+*Install*:
+
+. Install https://www.jetbrains.com/idea/[IntelliJ IDEA] (the free Community edition works fine).
+. Open *Settings/Preferences → Plugins*, search the Marketplace for **Cursive**, and install it. Restart the IDE when prompted.
+. Open your project's folder — Cursive detects `deps.edn` automatically and offers to set it up as a Clojure deps project.
+
+*Start a project REPL*: use the *Run/Debug Configurations* dropdown (top right) → *Edit Configurations* → `+` → **Clojure REPL** → **Local**, choosing "deps.edn" as the project type. Run it (the green ▶ button, or `Ctrl+Shift+F10`) to start a REPL connected to your project's classpath.
+
+*Evaluate a form*: with a `.clj` file open and the REPL running, place your cursor on an expression and use *Tools → REPL → Send Form Before Caret to REPL* (bindable to a keyboard shortcut of your choice under *Settings → Keymap → Cursive*, commonly bound to `Ctrl+Enter`). *Load File in REPL* (also under *Tools → REPL*) re-evaluates the whole current file.
+
+== CIDER (Emacs)
+
+CIDER is Emacs's Clojure environment — the choice for anyone already living in Emacs day to day.
+
+*Install*: CIDER is an Emacs package. Using https://github.com/jwiegley/use-package[`use-package`] (or `M-x package-install` directly), install `cider`:
+
+[source,elisp]
+----
+(use-package cider
+  :ensure t)
+----
+
+*Start a project REPL*: open any file inside your project (the one containing `deps.edn`) and run `M-x cider-jack-in`. CIDER detects the `deps.edn` build tool automatically, starts a Clojure process with your project's classpath, and connects an Emacs REPL buffer to it.
+
+*Evaluate a form*: with a `.clj` file open and CIDER connected, place your cursor at the end of an expression and press `C-x C-e` (`cider-eval-last-sexp`) — the result appears in the minibuffer and echoes back inline as an overlay. `C-c C-k` (`cider-load-buffer`) re-evaluates the entire current file, and `C-c M-n` switches your REPL's active namespace to match whatever file you're editing.
+
+== Try it yourself
+
+* Whichever editor you set up, deliberately break something — introduce a typo in a function — and confirm your editor shows you the error inline (not just in a separate terminal), right where you evaluated the broken form.
+* Find your editor's equivalent of "interrupt the currently-running evaluation" (useful the day you accidentally evaluate an infinite loop) before you need it under pressure.
+* If you have access to a second machine, try setting up a different one of the three editors than the one you chose — the point isn't to switch, it's to notice how much of the REPL-driven workflow from <<ch-1-1-hello-repl,1.1>> is genuinely editor-independent.

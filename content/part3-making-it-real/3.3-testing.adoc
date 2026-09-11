@@ -1,0 +1,116 @@
+[#ch-3-3-testing]
+= Testing
+
+You've already run tests twice — the placeholder `deftest` `deps-new` generated in <<ch-1-2-hello-program,1.2>>, and the one you wrote to replace it. This chapter properly introduces `clojure.test`, Clojure's built-in testing library, and a habit that's genuinely different from most newcomers' prior experience: testing driven from the REPL, not just from a separate `test` command.
+
+== `clojure.test` basics
+
+Three macros do almost everything: `deftest` names a test, `testing` labels a group of assertions within it (purely for readable output — it doesn't change behavior), and `is` makes an assertion.
+
+[source,clojure]
+----
+(ns demo.core-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [demo.core :as sut]))
+
+(deftest add-test
+  (testing "adds two numbers"
+    (is (= 5 (sut/add 2 3)))))
+
+(deftest average-test
+  (testing "averages a collection of numbers"
+    (is (= 2 (sut/average [1 2 3])))))
+----
+
+`(:require ... :as sut)` — "system under test" — is a common Clojure convention for the alias you give the namespace a test file is testing; you'll see it in test files throughout the Clojure ecosystem, not just this book.
+
+Run the suite from the command line with the `:test` alias `deps-new` already put in your `deps.edn`, via `build.clj`'s `test` task:
+
+[source,shell]
+----
+$ clojure -T:build test
+Running tests in #{"test"}
+
+Testing demo.core-test
+
+Ran 2 tests containing 2 assertions.
+0 failures, 0 errors.
+----
+
+Under the hood, that task shells out to https://github.com/cognitect-labs/test-runner[cognitect-labs/test-runner], which scans `test/` for every `deftest` and runs them all — the same mechanism, just wrapped by `tools.build` so `clojure -T:build ci` (used since <<ch-1-3-hello-production,1.3>>) runs your tests as part of every build, not as a separate step you might forget.
+
+== Reading a failure
+
+Tests are only useful when they can fail informatively. Suppose `average` is defined using plain division:
+
+[source,clojure]
+----
+(defn average [nums]
+  (/ (reduce + nums) (count nums)))
+----
+
+Recall from <<ch-2-1-syntax,Syntax & the Reader>> that Clojure has exact ratios — `(average [1 2])` doesn't return `1.5`, it returns the ratio `3/2`. A test that assumes a double will fail, and the failure output tells you exactly why:
+
+[source,clojure-repl]
+----
+user=> (deftest average-two-test
+         (testing "averages two numbers as a double"
+           (is (= 1.5 (sut/average [1 2])))))
+#'user/average-two-test
+user=> (average-two-test)
+
+FAIL in (average-two-test) (NO_SOURCE_FILE:1)
+averages two numbers as a double
+expected: (= 1.5 (sut/average [1 2]))
+  actual: (not (= 1.5 3/2))
+nil
+----
+
+That `actual:` line is `clojure.test` at its best: it doesn't just say "assertion failed," it shows you the *actual value it computed* (`3/2`) substituted right into the expression you wrote. You don't have to add your own debug-printing to see what went wrong — the failure message already contains it.
+
+== REPL-driven testing
+
+Notice what just happened above: `(average-two-test)` was called like an ordinary function, straight from the REPL, and it ran. That's because `deftest` *is* just `defn` in a light disguise — it defines a zero-argument function under that name, containing your assertions. You didn't need a test runner, a separate command, or even a test file to run it.
+
+This matters in practice more than it might look like it should. The typical Clojure workflow is: write a function in your editor, evaluate it into your running REPL, write a `deftest` for it in the same session, evaluate *that*, and call it directly — all without ever leaving the REPL or waiting for a full test-suite run. If it fails, fix the function in place, re-evaluate just that one function (not the whole file, not the whole project), and call the test again:
+
+[source,clojure-repl]
+----
+user=> (average-two-test)
+
+FAIL in (average-two-test) (NO_SOURCE_FILE:1)
+averages two numbers as a double
+expected: (= 1.5 (sut/average [1 2]))
+  actual: (not (= 1.5 3/2))
+nil
+user=> (defn average [nums]
+         (/ (double (reduce + nums)) (count nums)))
+#'demo.core/average
+user=> (average-two-test)
+nil
+----
+
+No output from the second call to `average-two-test` other than the `nil` every function returns — `clojure.test` only prints something when an assertion fails. Silence is the passing case.
+
+This tight loop — write, evaluate, test, fix, re-evaluate, re-test, all in the same running process — is the single biggest workflow difference you'll notice moving from an edit-run-repeat language into Clojure. It's worth deliberately practicing rather than falling back on "run the whole suite from the terminal" out of habit, though that full-suite run is still exactly the right tool before committing or deploying — which is precisely what happens automatically inside `clojure -T:build ci`.
+
+To run every test in a whole namespace at once from the REPL, without wrapping it in a full build, use `clojure.test/run-tests`:
+
+[source,clojure-repl]
+----
+user=> (require '[clojure.test :refer [run-tests]])
+nil
+user=> (run-tests 'demo.core-test)
+
+Testing demo.core-test
+
+Ran 2 tests containing 2 assertions.
+0 failures, 0 errors.
+{:test 2, :pass 2, :fail 0, :error 0, :type :summary}
+----
+
+== Try it yourself
+
+* Write a `deftest` for `validate-age` from <<ch-3-2-error-handling,Error Handling>> that asserts both the happy path (a valid age is returned unchanged) and the failure path (using `is (thrown-with-msg? ...)` — look up its docstring with `(doc thrown-with-msg?)`).
+* Deliberately write a failing assertion and read the failure output before fixing it — get comfortable with the shape of `expected:`/`actual:` before you're debugging something you actually care about.
+* Add a test for the bookmarks `atom` example from <<ch-3-1-state-and-identity,State & Identity>>, using `use-fixtures` (look up `(doc clojure.test/use-fixtures)`) to reset the atom to empty before each test runs — this is exactly the pattern <<ch-3-4-project-checkpoint-web-api,3.4>> uses to keep its tests from interfering with each other.

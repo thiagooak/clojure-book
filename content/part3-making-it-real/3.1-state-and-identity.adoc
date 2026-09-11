@@ -1,0 +1,101 @@
+[#ch-3-1-state-and-identity]
+= State & Identity
+
+Every collection you met in Part 2 — vectors, maps, sets, lists — is immutable. `assoc`, `conj`, and friends never change a collection in place; they return a new one, leaving the original untouched. That's worth sitting with for a moment, because it raises an obvious, practical question: if nothing can change, how does a running program ever accumulate anything? A shopping cart that grows as items are added. A cache that fills up as requests come in. A counter that goes up. Real programs do this constantly — so Clojure must have an answer. It does, and it's different enough from what you're likely used to that it deserves its own unhurried chapter before anything else builds on it.
+
+== The problem, concretely
+
+Suppose you write a function to add a bookmark to a map of bookmarks, the way you'd use `assoc` from <<ch-2-4-hashed-collections,Hashed Collections>>:
+
+[source,clojure-repl]
+----
+user=> (defn add-bookmark [bookmarks id url]
+         (assoc bookmarks id url))
+#'user/add-bookmark
+user=> (def my-bookmarks {})
+#'user/my-bookmarks
+user=> (add-bookmark my-bookmarks 1 "https://clojure.org")
+{1 "https://clojure.org"}
+user=> my-bookmarks
+{}
+----
+
+`add-bookmark` did exactly what `assoc` promised: it returned a *new* map with the bookmark added. But `my-bookmarks` itself is completely unchanged — it's still empty. That's not a bug. `assoc` can't mutate its argument, because in Clojure, nothing can. If you want the change to actually stick — to be visible the next time anyone looks at `my-bookmarks` — you need something other than a plain value to hold it.
+
+== Atoms
+
+An atom is a mutable *container* for an immutable value. The value inside never changes in place; instead, the atom is told to swap its old value for a new one, computed from the old one. This is the distinction Clojure draws between an object's *identity* (the atom itself, which stays the same reference over time) and its *state* (the immutable value it happens to be pointing at right now) — hence the chapter title.
+
+[source,clojure-repl]
+----
+user=> (def counter (atom 0))
+#'user/counter
+user=> @counter
+0
+----
+
+`atom` creates the container, initialized with `0`. The `@` reader macro (short for `deref`) reads its current value.
+
+To change it, you don't assign a new value directly — you `swap!` in a function that computes the next value from the current one:
+
+[source,clojure-repl]
+----
+user=> (swap! counter inc)
+1
+user=> (swap! counter + 5)
+6
+user=> @counter
+6
+----
+
+`(swap! counter inc)` means: "take the atom's current value, call `inc` on it, and make that the atom's new value." `(swap! counter + 5)` does the same with `+`, passing `5` as an extra argument — the pattern is `(swap! the-atom f & args)`, and the new value is `(apply f current-value args)`. Both calls return the *new* value, which is also what gets left inside the atom for the next reader to see with `@`.
+
+If you want to replace the value outright, without computing it from the old one, use `reset!`:
+
+[source,clojure-repl]
+----
+user=> (reset! counter 100)
+100
+user=> @counter
+100
+----
+
+Now the bookmarks example, done properly:
+
+[source,clojure-repl]
+----
+user=> (def bookmarks (atom {}))
+#'user/bookmarks
+user=> (defn add-bookmark! [id url]
+         (swap! bookmarks assoc id url))
+#'user/add-bookmark!
+user=> (add-bookmark! 1 "https://clojure.org")
+{1 "https://clojure.org"}
+user=> (add-bookmark! 2 "https://clojure.org/guides")
+{1 "https://clojure.org", 2 "https://clojure.org/guides"}
+user=> @bookmarks
+{1 "https://clojure.org", 2 "https://clojure.org/guides"}
+----
+
+This time the change is real and visible from anywhere holding a reference to `bookmarks` — not because `assoc` suddenly started mutating maps, but because `swap!` took the immutable result `assoc` handed back and installed it as the atom's new state. Note the trailing `!` on `add-bookmark!` — that's a Clojure naming convention (not enforced by the compiler) marking a function as doing something with side effects, exactly like this one does.
+
+This is the exact shape you'll use in <<ch-3-4-project-checkpoint-web-api,3.4>> to hold `reading-list`'s bookmarks in memory: an atom wrapping a map, updated with `swap!` every time a request comes in.
+
+== Why this design, not just mutable variables
+
+It would be simpler, in one sense, to just let variables mutate directly the way most languages do. Clojure's answer is that separating "the immutable value" from "the mutable reference to it" pays off the moment more than one thread is involved. Because a value inside an atom can never be *partially* changed by two threads at once — `swap!`'s update function may retry automatically if another thread updates the atom first — atoms give you safe concurrent updates without manual locks. You won't feel the benefit of that until <<ch-4-1-concurrency,Concurrency>>, but it's worth knowing now that this isn't complexity for its own sake: it's what makes the concurrency story in Part 4 as simple as it turns out to be.
+
+== A brief word on refs and agents
+
+Atoms cover the overwhelming majority of state you'll need in ordinary application code, and they're the only tool this book uses. Clojure has two other reference types worth knowing exist:
+
+* **Refs**, updated inside a `dosync` transaction, for when you need to change *multiple* pieces of state together, atomically — the classic example is transferring money between two accounts, where you never want to observe one account debited and the other not yet credited.
+* **Agents**, updated with `send`/`send-off`, for state that's changed asynchronously and independently, where you don't need to see the result of an update immediately.
+
+Both are documented in depth at https://clojure.org/reference/refs[clojure.org/reference/refs] and https://clojure.org/reference/agents[clojure.org/reference/agents] if you find yourself needing coordinated or asynchronous state later. For everything in this book, an atom is the right tool.
+
+== Try it yourself
+
+* Build a simple visit counter: an atom holding a map from page name to visit count, with an `increment-visit!` function that bumps the right entry (creating it at `1` if it doesn't exist yet — look at `fnil` or `(get map key 0)` for handling the missing case).
+* Predict, then check, what `(swap! counter dec)` does starting from `0` if `counter` was defined without any constraint on going negative.
+* Rewrite the bookmarks example so `add-bookmark!` refuses to overwrite an existing `id`, returning the atom's value unchanged if that `id` is already taken.

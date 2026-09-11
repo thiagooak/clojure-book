@@ -1,0 +1,155 @@
+[#ch-5-1-hardening]
+= Hardening for Production
+
+`reading-list` has been deployed twice now — <<ch-1-3-hello-production,1.3>>'s bare `handler` function, and <<ch-3-4-project-checkpoint-web-api,3.4>>'s full REST API. Both work, and both would embarrass you within a day of real traffic: no visibility into what the server's doing, and one bad request away from a JVM stack trace print straight to the console with no useful response to the client. This chapter closes both gaps, plus the one config wrinkle you've been quietly relying on since 1.3.
+
+== Configuration you're already doing
+
+Look back at `-main` in `alice/reading_list.clj`:
+
+[source,clojure]
+----
+(defn -main [& _args]
+  (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
+    (http/run-server handler/app {:port port})
+    (println (str "Listening on port " port))))
+----
+
+`(System/getenv "PORT")` has been there since <<ch-1-3-hello-production,1.3>>, with only a passing mention — it reads an environment variable at startup, falling back to `"8080"` if it isn't set. This is the right pattern in general, not just for the port: anything that differs between your laptop and production — a port, a database URL, an API key — belongs in an environment variable, read once at startup, never hardcoded and never committed to source control. Fly.io (and virtually every other host) gives you a way to set these per-deployment (`fly secrets set SOME_KEY=value`) precisely so secrets never need to live in your `Dockerfile` or your git history. `reading-list` doesn't have any actual secrets yet — there's no database, no third-party API key — but the moment it does, this is where they go.
+
+== Structured logging
+
+Every message `reading-list` has printed so far has gone through `println`. That's fine for a book; it's a real liability in production, where you need timestamps, severity levels, and a format some other tool can search and filter — not raw text scrolling past in a terminal you'll never look at again in real time.
+
+Add `org.clojure/tools.logging` (a thin, backend-agnostic logging API) and `org.slf4j/slf4j-simple` (a minimal backend that actually prints the log lines somewhere) to `deps.edn`:
+
+[source,clojure]
+----
+{:deps {org.clojure/clojure {:mvn/version "1.12.1"}
+        http-kit/http-kit {:mvn/version "2.8.0"}
+        org.clojure/tools.logging {:mvn/version "1.3.0"}
+        org.slf4j/slf4j-simple {:mvn/version "2.0.16"}
+        metosin/reitit-ring {:mvn/version "0.7.2"}
+        ring/ring-json {:mvn/version "0.5.1"}}
+ ...}
+----
+
+`tools.logging` is deliberately just a facade — it doesn't do any logging itself, it delegates to whatever logging backend is on the classpath (Logback, `java.util.logging`, or here, the simplest possible option, `slf4j-simple`, which just prints formatted lines to stderr). This indirection means you can swap logging backends later — say, to one that emits JSON for a log aggregator — without touching a single line of code that calls `log/info`.
+
+Swap `-main`'s `println` for `log/info`:
+
+[source,clojure]
+----
+(ns alice.reading-list
+  (:require [clojure.tools.logging :as log]
+            [org.httpkit.server :as http]
+            [alice.handler :as handler])
+  (:gen-class))
+
+(defn -main [& _args]
+  (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
+    (http/run-server handler/app {:port port})
+    (log/info "server starting" {:port port})))
+----
+
+[source,shell]
+----
+$ clojure -M:run-m
+[main] INFO alice.reading-list - server starting {:port 8080}
+----
+
+`log/info` (and `log/warn`, `log/error`) accept any number of arguments and `str` them together, so passing a plain map like `{:port port}` alongside a message is a normal, idiomatic way to attach structured context.
+
+== Middleware: logging every request, and catching every failure
+
+A single startup log line isn't enough — you also want to know what the server's actually doing while it runs, and you want a request that blows up to return a real HTTP response instead of silently hanging or crashing the handling thread. Both are ordinary Ring middleware, the same wrapping pattern `wrap-json-body`/`wrap-json-response` have used since <<ch-3-4-project-checkpoint-web-api,3.4>>:
+
+[source,clojure]
+----
+(ns alice.handler
+  (:require [clojure.tools.logging :as log]
+            [reitit.ring :as ring]
+            [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
+            [alice.store :as store]))
+
+;; ... health, list-bookmarks, create-bookmark, get-bookmark,
+;; delete-bookmark, and router unchanged from 3.4 ...
+
+(defn wrap-logging [handler]
+  (fn [request]
+    (let [response (handler request)]
+      (log/info (:request-method request) (:uri request) "->" (:status response))
+      response)))
+
+(defn wrap-exception [handler]
+  (fn [handler-request]
+    (try
+      (handler handler-request)
+      (catch Throwable t
+        (log/error t "unhandled exception handling"
+                   (:request-method handler-request) (:uri handler-request))
+        {:status 500 :body {:error "internal server error"}}))))
+
+(def app
+  (-> (ring/ring-handler router (ring/create-default-handler))
+      (wrap-json-body {:keywords? true})
+      (wrap-json-response)
+      (wrap-logging)
+      (wrap-exception)))
+----
+
+Both are plain functions taking a handler and returning a new handler — nothing new syntactically, just the same higher-order-function pattern from <<ch-2-2-functions,Functions>>, applied to Ring's specific "a handler is a function from request map to response map" convention.
+
+Order matters here: `wrap-exception` is the outermost wrapper (last in the `->` chain, so it runs first on the way in and last on the way out), which means it can catch a failure thrown by *anything* inside it — routing, JSON parsing, your handler functions, `wrap-logging` itself. Put it innermost instead, and an exception thrown before reaching it would crash past it, unhandled.
+
+Try it running:
+
+[source,shell]
+----
+$ clojure -M:run-m
+[main] INFO alice.reading-list - server starting {:port 8080}
+----
+
+[source,shell]
+----
+$ curl -s http://localhost:8080/health
+{"status":"ok"}
+$ curl -s -X POST http://localhost:8080/bookmarks \
+    -H "Content-Type: application/json" \
+    -d '{"url":"https://clojure.org","title":"Clojure"}'
+{"id":1,"url":"https://clojure.org","title":"Clojure"}
+----
+
+[source,shell]
+----
+[main] INFO alice.reading-list - server starting {:port 8080}
+[] INFO alice.handler - :get /health -> 200
+[] INFO alice.handler - :post /bookmarks -> 201
+----
+
+Every request now leaves a trace. To see `wrap-exception` actually catch something, test it in isolation at the REPL — `reading-list`'s handlers are currently well-behaved enough (`parse-long` returns `nil` rather than throwing on bad input, and `ring-json` handles malformed JSON itself with its own 400) that provoking a genuine unhandled exception through the running server takes some effort. Confirming the middleware's *contract* directly is more direct:
+
+[source,clojure-repl]
+----
+user=> (require '[alice.handler :as h])
+nil
+user=> (def boom (h/wrap-exception (fn [_req] (throw (ex-info "boom" {})))))
+#'user/boom
+user=> (boom {:request-method :get :uri "/boom"})
+[main] ERROR alice.handler - unhandled exception handling :get /boom
+clojure.lang.ExceptionInfo: boom {}
+	at ...
+{:status 500, :body {:error internal server error}}
+----
+
+The caller gets a clean `500` with no stack trace leaked into the response body; the full trace goes to the log instead, exactly where whoever's debugging it later will actually look.
+
+== Health checks are for machines, not just humans
+
+`/health` has existed since <<ch-3-4-project-checkpoint-web-api,3.4>>, mostly as an easy first route to build the rest of the API around. In production it earns its keep: Fly.io (and every other real deploy target) polls a health endpoint to decide whether an instance is actually serving traffic, and restarts or stops routing to instances that fail it. Right now `reading-list`'s `/health` always returns `200 {:status "ok"}` unconditionally — true today, since there's nothing it depends on that could fail. The moment `reading-list` gains a real dependency (a database connection, another service it calls), `/health` should actually check that dependency and report failure honestly — a health check that always says "ok" regardless of reality is worse than no health check at all, because it actively hides the problem from the one system positioned to react to it.
+
+== Try it yourself
+
+* Add a `LOG_LEVEL` environment variable read at startup, and use it to control whether `wrap-logging` logs at `:info` or `:debug` (hint: `slf4j-simple`'s own log level is normally set via a system property or config file — for a REPL-friendly version, just branch in `wrap-logging` itself between `log/info` and `log/debug`).
+* Deliberately reintroduce a bug that *does* throw all the way through the router — for example, temporarily make `create-bookmark` call `(/ 1 0)` before returning — and confirm `wrap-exception` catches it and the server keeps running for the next request, instead of dying.
+* Read Fly.io's own documentation on `[[services.http_checks]]` in `fly.toml` and configure the app deployed since <<ch-1-3-hello-production,1.3>> to health-check against `/health` before routing traffic to a new instance.

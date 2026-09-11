@@ -1,0 +1,75 @@
+[#ch-4-4-macros]
+= Macros
+
+Back in <<ch-2-1-syntax,Syntax & the Reader>>, you saw Clojure's evaluation model: source is read into plain Clojure data, and *then* compiled. <<ch-2-5-flow-control,Flow Control>> mentioned in passing that this separation "makes room for macros" — functions that run on your code, as data, in between those two steps, and emit new code to actually be compiled. This chapter is a deliberately brief look at what that means and why it matters, not a deep dive — macros are a big enough topic to fill a book chapter on their own (several exist; see the links in <<ch-2-5-flow-control,Flow Control>>), and most Clojure code you'll ever write won't need to define one.
+
+== A minimal macro
+
+Clojure has `when` but not its opposite. Let's build one:
+
+[source,clojure-repl]
+----
+user=> (defmacro unless [test then]
+         `(if (not ~test) ~then))
+#'user/unless
+----
+
+`` ` `` (syntax-quote) works like the `'` (quote) from <<ch-2-1-syntax,Syntax & the Reader>> — it suspends evaluation of what follows — but `~` (unquote) inside a syntax-quoted form marks a spot where evaluation should resume, splicing in the actual argument's value rather than the symbol `test` itself.
+
+Ask Clojure what this macro actually expands into, without running it, using `macroexpand-1`:
+
+[source,clojure-repl]
+----
+user=> (macroexpand-1 '(unless false (println "ran")))
+(if (clojure.core/not false) (println "ran"))
+----
+
+`unless` never actually *runs* anything — it rewrites `(unless false (println "ran"))` into `(if (not false) (println "ran"))` (`not` gets fully qualified to `clojure.core/not` in the expansion, which is `defmacro`'s doing, to guard against a caller having redefined `not` locally). The compiler then compiles *that* — an ordinary `if` — as if you'd written it yourself. Confirm it actually behaves as expected:
+
+[source,clojure-repl]
+----
+user=> (unless false (println "this ran because the test was false"))
+this ran because the test was false
+nil
+----
+
+== Accepting multiple forms: `&` and `~@`
+
+`unless` above only takes one form to run. A more realistic macro often needs to accept a whole body of forms, the way `when` does:
+
+[source,clojure-repl]
+----
+user=> (defmacro my-when [test & body]
+         `(if ~test (do ~@body)))
+#'user/my-when
+user=> (macroexpand-1 '(my-when true (println "a") (println "b")))
+(if true (do (println "a") (println "b")))
+----
+
+`& body` collects every remaining form into a list, the same rest-args pattern from <<ch-2-2-functions,Functions>>. `~@` (unquote-splice) is unquote's sibling: instead of splicing in one value, it splices in *each item of a collection*, unwrapped — `~@body` inserts `(println "a") (println "b")` directly into the `do`, rather than inserting `body` itself as a single nested list. Try `~` instead of `~@` here and see what breaks; that's often the fastest way to build an intuition for the difference.
+
+[source,clojure-repl]
+----
+user=> (my-when true (println "a") (println "b"))
+a
+b
+nil
+----
+
+== Why this isn't your first tool
+
+Everything `unless` and `my-when` do here, an ordinary function *could* do too, if `if` itself were a function you could pass around — but it can't be, because `if` only evaluates the branch it needs, and a function call always evaluates all of its arguments first. That's the one thing macros can do that functions fundamentally cannot: control *whether*, and *when*, their arguments get evaluated at all. That's exactly why `if`, `when`, `and`, `or`, and `->`/`->>` all have to be macros (or special forms) rather than plain functions.
+
+That power comes with real costs, which is why this book's advice is to reach for a function first, every time, and only consider a macro when you specifically need to control evaluation order or reshape syntax itself:
+
+* A macro can't be passed to `map`, stored in a variable, or passed as a callback — a function's whole value is that it's just data; a macro only exists at compile time and vanishes into whatever it expanded to.
+* Debugging a macro means debugging two things — the code you wrote, and the code it generated — which is exactly what `macroexpand-1` is for, and worth reaching for early whenever a macro's behavior surprises you.
+* Nearly everything that feels like "I need a macro for this" turns out, on reflection, to be solvable with a plain higher-order function instead — which is easier to test, easier to reason about, and composes with the rest of the language for free.
+
+You'll see real macros constantly as you read more Clojure code — `defn` itself is one, and so is `->`. Recognizing what they expand to with `macroexpand-1`, as you did above, is the useful day-to-day skill; writing your own is a much rarer need.
+
+== Try it yourself
+
+* Use `macroexpand-1` on `(-> 5 inc (* 2))` (the threading macro from <<ch-2-2-functions,Functions>>) and confirm it produces `(* (inc 5) 2)`.
+* Write a `my-and` macro taking two forms, expanding to something equivalent to `and`'s short-circuiting behavior using `if`, and confirm with `macroexpand-1` that a form which would error if evaluated (like `(/ 1 0)`) never actually runs when the first argument is `false`.
+* Predict, then check with `macroexpand-1`, what `(unless false (println "a") (println "b"))` does — `unless` as defined above only accepts one form after `test`. What error do you get, and why?

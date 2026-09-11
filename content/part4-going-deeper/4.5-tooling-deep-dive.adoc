@@ -1,0 +1,130 @@
+[#ch-4-5-tooling-deep-dive]
+= Tooling Deep Dive
+
+You've been using `deps.edn`, aliases, and `tools.build` on faith since <<ch-1-2-hello-program,1.2>> — enough explanation to get moving, not enough to really understand what's happening when you run `clojure -T:build ci`. This chapter closes that gap.
+
+== `-M`, `-X`, and `-T`: three ways to invoke the CLI
+
+<<ch-1-2-hello-program,1.2>> mentioned these three without much elaboration. Now that you've used all three throughout the book, here's what actually distinguishes them:
+
+* **`-M`** runs `clojure.main` with a Java-style `args` vector — the alias's `:main-opts` become command-line-style arguments, typically `["-m" "some.namespace"]` to call that namespace's `-main` with whatever's left on the command line as plain strings. This is the closest to "just run a program" — it's what `reading-list`'s `:run-m` alias has used since <<ch-1-2-hello-program,1.2>>.
+* **`-X`** calls a specific *function* directly with a *map* of arguments, no `-main`/`args` parsing involved. The alias's `:exec-fn` names the function, `:exec-args` supplies default arguments, and you can override or add keys straight from the command line:
++
+[source,shell]
+----
+{:aliases
+ {:greet {:ns-default demo.core
+          :exec-fn greet
+          :exec-args {:name "World"}}}}
+----
++
+[source,shell]
+----
+$ clojure -X:greet
+Hello, World!
+$ clojure -X:greet :name '"Clojure"'
+Hello, Clojure!
+----
++
+Notice the extra quoting on the command line (`'"Clojure"'`) — everything after the alias is read as Clojure data, not shell strings, so a string argument needs its own explicit double quotes surviving past the shell's own quoting.
+* **`-T`** is `-X`'s sibling for *build and tooling* tasks specifically — `deps-new` and `tools.build` both work this way. The key practical difference from `-X` is isolation: a `-T` alias never sees your project's own `:deps`, only what the alias itself declares (that's why `:build`'s alias in `deps.edn` has its own `:deps {io.github.clojure/tools.build ...}}` entry) — so your build tooling's dependencies can never silently collide with your application's.
+
+A rule of thumb: `-M` for "run this like a program," `-X` for "call this function with structured arguments," `-T` for "run a build or project-management task, isolated from my app's dependencies."
+
+== `deps.edn`, fully
+
+You've seen most of these keys already, scattered across earlier chapters. Together:
+
+* **`:paths`** — where your own project's source and resources live.
+* **`:deps`** — libraries your application needs at runtime, always active.
+* **`:aliases`** — named, opt-in bundles of extra configuration, each a map that can include:
+** **`:extra-paths`** — additional source roots, active only when this alias is used (`reading-list`'s `:test` alias adds `"test"` this way, so test code never ships as part of a normal run or an uberjar build).
+** **`:extra-deps`** — additional libraries, active only when this alias is used (the test runner, for instance — no reason your production uberjar needs a test framework bundled into it).
+** **`:main-opts`** / **`:exec-fn`** + **`:exec-args`** / **`:ns-default`** — how `-M`/`-X`/`-T` invoke things, as above.
+
+You can also layer in dependencies for a single, one-off invocation without touching the file at all, using `-Sdeps`:
+
+[source,shell]
+----
+clojure -Sdeps '{:deps {criterium/criterium {:mvn/version "0.4.6"}}}' -M -e "(require 'criterium.core)"
+----
+
+This is useful for trying a library out before committing to adding it to `deps.edn` for real.
+
+To see the fully-resolved dependency tree — every transitive dependency, and which versions won when two libraries wanted different versions of the same thing — use `-Stree`, exactly as you did in <<ch-3-4-project-checkpoint-web-api,3.4>> to confirm `reitit-ring` stayed lean:
+
+[source,shell]
+----
+$ clojure -Stree
+org.clojure/clojure 1.12.1
+  . org.clojure/spec.alpha 0.5.238
+  . org.clojure/core.specs.alpha 0.4.74
+http-kit/http-kit 2.8.0
+metosin/reitit-ring 0.7.2
+  . metosin/reitit-core 0.7.2
+    ...
+----
+
+A line starting with `X` in that output marks a version conflict where tools.deps picked one version over another — worth a second look any time a library behaves unexpectedly, since it might be running against a different version than you expect.
+
+== `tools.build`, line by line
+
+Here's the `build.clj` `deps-new` generated back in <<ch-1-2-hello-program,1.2>>, now with the context to actually read it:
+
+[source,clojure]
+----
+(ns build
+  (:refer-clojure :exclude [test])
+  (:require [clojure.tools.build.api :as b]))
+
+(def lib 'net.clojars.alice/reading-list)
+(def version "0.1.0-SNAPSHOT")
+(def main 'alice.reading-list)
+(def class-dir "target/classes")
+
+(defn test "Run all the tests." [opts]
+  (let [basis    (b/create-basis {:aliases [:test]})
+        cmds     (b/java-command
+                  {:basis     basis
+                   :main      'clojure.main
+                   :main-args ["-m" "cognitect.test-runner"]})
+        {:keys [exit]} (b/process cmds)]
+    (when-not (zero? exit) (throw (ex-info "Tests failed" {}))))
+  opts)
+
+(defn- uber-opts [opts]
+  (assoc opts
+         :lib lib :main main
+         :uber-file (format "target/%s-%s.jar" lib version)
+         :basis (b/create-basis {})
+         :class-dir class-dir
+         :src-dirs ["src"]
+         :ns-compile [main]))
+
+(defn ci "Run the CI pipeline of tests (and build the uberjar)." [opts]
+  (test opts)
+  (b/delete {:path "target"})
+  (let [opts (uber-opts opts)]
+    (b/copy-dir {:src-dirs ["resources" "src"] :target-dir class-dir})
+    (b/compile-clj opts)
+    (b/uber opts))
+  opts)
+----
+
+`(:refer-clojure :exclude [test])` exists because `test` is about to be redefined as a function name in this namespace, which would otherwise collide with `clojure.core/test` (a rarely-used function that tests whether a value has certain metadata — you're not losing anything meaningful here).
+
+Reading `ci`, in order:
+
+. `(test opts)` — runs the test suite, using a *basis* (tools.build's term for "a fully resolved classpath plus configuration," built from `deps.edn` plus whichever aliases you name) that includes the `:test` alias's extra path and dependencies. If any test fails, it throws, and `ci` stops right there — you never get an uberjar built from code with failing tests.
+. `(b/delete {:path "target"})` — wipes any previous build output, so stale `.class` files or an old jar can't linger and mask a real build problem.
+. `(b/copy-dir ...)` — copies `resources` and `src` into `target/classes`, the staging area for what eventually gets zipped into the jar.
+. `(b/compile-clj opts)` — ahead-of-time (AOT) compiles the `:ns-compile` namespace (and everything it `require`s) into real `.class` files. This is what actually makes `:gen-class` (from <<ch-4-2-java-interop,Java Interop>>) meaningful — without AOT compilation, there'd be no named `.class` file for the JVM to find `main` in at all.
+. `(b/uber opts)` — packages everything in `class-dir`, plus every dependency's own classes and resources, into one self-contained `.jar`, with a manifest pointing `java -jar` at `main`.
+
+This is the exact pipeline that's produced every uberjar you've built and deployed since <<ch-1-3-hello-production,1.3>>, and every image built by the `Dockerfile`'s build stage — `RUN clojure -T:build ci` inside that Dockerfile is running precisely these five steps, inside the container, before the second stage ever sees a finished jar.
+
+== Try it yourself
+
+* Add a new alias `:outdated` using https://github.com/liquidz/antq[`antq`] (a community tool for checking outdated dependencies) via `-Sdeps`, and run it against `reading-list`'s `deps.edn`.
+* Read `build.clj`'s `uber-opts` function again and identify which key controls the jar's output filename — then change `version` to `"0.2.0"` and confirm the built jar's name changes to match.
+* Add a `:main-opts` alias that starts a REPL with `reading-list`'s own namespaces already required (hint: look at `clojure.main`'s `--eval`/`--init` options in `clojure -M --help` output), so `alice.handler` and `alice.store` are ready to use the moment the REPL starts.

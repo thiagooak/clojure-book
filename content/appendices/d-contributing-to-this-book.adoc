@@ -1,0 +1,10 @@
+[#ch-d-contributing]
+= Appendix: Contributing to This Book
+
+See `CONTRIBUTING.md` in the repository root for the full contribution
+process and this project's content policy — in short: clojure.org's own
+guide content may be reused directly (it's already under this project's
+license), everything else is inspiration only and gets linked from
+<<ch-c-further-reading,Further Reading>> instead of copied, and anything
+bigger than a wording fix should start as an issue, not a PR, since this
+is a narrative book where changes ripple across chapters.

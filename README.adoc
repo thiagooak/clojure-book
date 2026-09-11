@@ -1,0 +1,65 @@
+= The Clojure Book
+
+An in-progress, unofficial prototype of a Rust-Book-style guided path
+through Clojure — from installing a REPL to a real toy project running in
+production. See `plan.md` for the full rationale and roadmap.
+
+**Status**: early draft, Phase 1 prototype. This project is *not*
+affiliated with, endorsed by, or reviewed by Clojure/core or clojure.org.
+The long-term goal (see `plan.md`, section 7) is to propose folding this
+content into clojure.org once it's proven out with real readers — but
+until that happens, treat everything here as an independent draft.
+
+== Why this exists
+
+Most Clojure tutorials get you to "hello world" but not to "I shipped
+something." The hypothesis behind this book: the thing that keeps
+beginners learning is the experience of seeing their own toy project live
+in production, early and often — not a perfectly ordered tour of language
+features. See `plan.md` for the full argument and the audit of what
+already exists (and doesn't) across clojure.org and the wider Clojure
+community.
+
+== Reading the book
+
+The book is written in AsciiDoc, one file per chapter, assembled by
+`book.adoc` using `include::` directives (the standard AsciiDoctor "book"
+doctype). Each chapter file has its own top-level `= Title` so it's a
+valid, previewable document on its own; `book.adoc` nests them under a
+`= Part N: ...` heading per part using `:leveloffset: +1`, so a chapter's
+`=` becomes a `==` chapter heading in the assembled book.
+
+To build a local HTML copy:
+
+[source,shell]
+----
+gem install --user-install asciidoctor   # one-time
+tools/build.sh                           # renders build/book.html
+----
+
+== Repository layout
+
+* `content/part0-before-you-start/` through `content/part5-ship-it/` —
+  chapters, grouped by part, matching the table of contents in `plan.md`
+  section 4.
+* `content/appendices/` — editor setup, glossary, further reading,
+  contributing.
+* `book.adoc` — the master document that includes every chapter in order.
+* `tools/build.sh` — local AsciiDoctor build.
+* `LICENSE` — Eclipse Public License 1.0 (matches clojure.org's own
+  license, chosen deliberately so this content can move there later
+  without a relicensing step).
+* `NOTICE.md` — attribution ledger for every piece of content adapted from
+  elsewhere (currently: clojure.org's own "Learn Clojure" guide).
+* `CONTRIBUTING.md` — how to propose changes, and this project's content
+  policy on referencing other people's work.
+
+== License
+
+Original content in this repository is licensed under the Eclipse Public
+License 1.0 (see `LICENSE`), the same license clojure.org itself uses.
+Some chapters adapt clojure.org's own "Learn Clojure" guide directly,
+under that same license — see `NOTICE.md` for exactly which files and
+what changed. Nothing in this repository is copied from any
+non-EPL-licensed source; other resources are linked to, never copied —
+see `CONTRIBUTING.md` for the full content policy.

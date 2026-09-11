@@ -1,0 +1,93 @@
+[#ch-4-1-concurrency]
+= Concurrency
+
+Every value you've worked with since <<ch-2-3-sequential-collections,Part 2>> has been immutable, and every piece of mutable state since <<ch-3-1-state-and-identity,State & Identity>> has gone through an atom rather than a raw, freely-mutated variable. That wasn't just about tidiness — it's exactly what makes concurrency in Clojure noticeably less painful than in languages where any variable can be mutated from anywhere. This chapter cashes in that investment.
+
+== The motivating problem
+
+Imagine `reading-list` (from <<ch-3-4-project-checkpoint-web-api,3.4>>) growing a feature: given all the stored bookmarks, check whether each one's URL is still reachable. One request per bookmark, and — this is the important part — each request mostly just *waits*. The CPU isn't doing much of anything while a network call is in flight.
+
+Simulate that shape without needing real network calls yet:
+
+[source,clojure]
+----
+(defn slow-check [url]
+  (Thread/sleep 200)
+  {:url url :reachable? true})
+----
+
+`Thread/sleep 200` stands in for "200ms spent waiting on a network response" — the real version, using an actual HTTP client, is <<ch-4-2-java-interop,next chapter's>> job. For now, the point is purely about *how many things are waiting at once*.
+
+== `map` is sequential
+
+[source,clojure-repl]
+----
+user=> (def urls ["https://clojure.org" "https://clojure.org/guides"
+                   "https://github.com" "https://github.com/clojure"
+                   "https://en.wikipedia.org"])
+#'user/urls
+user=> (time (dorun (map slow-check urls)))
+"Elapsed time: 1020.2935 msecs"
+nil
+----
+
+Five URLs, 200ms each, one after another: just over a second. `map` is lazy and single-threaded — nothing here overlaps.
+
+== `pmap` runs it in parallel
+
+`pmap` has the exact same signature and semantics as `map` — same inputs, same outputs, same order — but farms the work out across a thread pool:
+
+[source,clojure-repl]
+----
+user=> (time (dorun (pmap slow-check urls)))
+"Elapsed time: 211.939792 msecs"
+nil
+----
+
+Same five checks, same 200ms each, but now they overlap — roughly the time of *one* check, not five. This is `pmap`'s whole pitch: when the work per item is dominated by waiting (I/O, network calls, sleeping) rather than heavy computation, and there's no shared state between items to worry about, swapping `map` for `pmap` is close to a free win. (For CPU-bound work — heavy computation rather than waiting — the speedup exists but is bounded by your actual number of cores, and the overhead of spreading tiny amounts of work across threads can sometimes make `pmap` slower than plain `map`. Measure before assuming.)
+
+Notice what *didn't* need to change: `slow-check` itself has no locks, no thread-safety annotations, nothing concurrency-specific in it at all. That's the atoms-and-immutability foundation from Part 3 paying off directly — `slow-check` doesn't mutate anything shared, so running five copies of it at once is automatically safe.
+
+== Futures: fire off one thing and keep going
+
+`pmap` is for "run this same operation across a whole collection." Sometimes you want to kick off a single background computation and keep doing other things until you actually need its result. That's what `future` is for:
+
+[source,clojure-repl]
+----
+user=> (def f (future (slow-check "https://clojure.org")))
+#'user/f
+user=> (realized? f)
+false
+user=> @f
+{:url https://clojure.org, :reachable? true}
+user=> (realized? f)
+true
+----
+
+`(future ...)` starts evaluating its body on a separate thread immediately and returns right away — `f` is a handle to a result that may not exist yet. `realized?` lets you check without blocking; `@f` (the same `deref` you used on atoms) blocks until the result is ready, then returns it. If your program has other work to do while `slow-check` is running, a `future` lets it get on with that work instead of sitting idle waiting for a result nobody's asked for yet.
+
+== If you need atoms to coordinate with concurrency: you already know how
+
+Because `swap!` guarantees safe, atomic updates even when multiple threads call it at the same time, combining `pmap` or `future` with an atom to accumulate shared results — a running count of failures, say — is exactly the same `swap!` you learned in <<ch-3-1-state-and-identity,State & Identity>>, with no new API to learn:
+
+[source,clojure-repl]
+----
+user=> (def failures (atom 0))
+#'user/failures
+user=> (dorun (pmap (fn [_] (swap! failures inc)) (range 10)))
+nil
+user=> @failures
+10
+----
+
+Ten parallel increments, no lost updates, no locking code written by you. This is the payoff promised back in Part 3.
+
+== A brief word on `core.async`
+
+`pmap` and `future` cover a wide range of "run this concurrently and get a result back" needs. For more elaborate coordination — pipelines of work handed off between many concurrent processes, communicating over queues (called _channels_) rather than sharing memory directly — Clojure's community library https://github.com/clojure/core.async[`core.async`] provides `go` blocks and channels modeled on Communicating Sequential Processes (the same family of ideas behind Go's goroutines and channels). It's a substantial topic in its own right and out of scope for this book; know that it exists for when `pmap`/`future` genuinely aren't enough, and see the https://clojure.github.io/core.async/[core.async docs] when you get there.
+
+== Try it yourself
+
+* Time `(map slow-check urls)` against `(pmap slow-check urls)` for a list of 20 URLs instead of 5 — does the speedup ratio hold, shrink, or grow, and can you explain why from what you know about the thread pool `pmap` uses?
+* Kick off three `future`s at once, each sleeping a different amount of time, and print `"all done"` only once all three are realized (hint: `deref` blocks, so just `deref` all three in sequence — order doesn't matter since they're all already running).
+* Predict what happens if `slow-check` threw an exception instead of returning a map, and what you'd see when you `deref` a future whose body threw. Then try it.

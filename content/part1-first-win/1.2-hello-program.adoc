@@ -1,0 +1,154 @@
+[#ch-1-2-hello-program]
+= Hello, Program
+
+A REPL session disappears the moment you close it. To build anything worth keeping, you need code in files, organized as a project. This chapter scaffolds one real project — the one you'll keep building on for the rest of the book — and gets it running from the command line, outside the REPL.
+
+== Scaffolding a project
+
+Clojure's official CLI doesn't come with a `new` command the way `cargo new` or `npm init` do. Instead, the community standard is a separate tool called https://github.com/seancorfield/deps-new[deps-new], maintained by Sean Corfield. Install it once, as a Clojure CLI "tool":
+
+[source,shell]
+----
+clojure -Ttools install io.github.seancorfield/deps-new '{:git/tag "v0.9.0"}' :as new
+----
+
+Now generate a new application. Pick a namespace of the form `your-name/project-name` — this book uses `alice/reading-list` throughout, so substitute your own name or handle wherever you see `alice`:
+
+[source,shell]
+----
+clojure -Tnew app :name alice/reading-list
+----
+
+This creates a `reading-list/` directory. `cd` into it and look around:
+
+[source,shell]
+----
+reading-list/
+├── deps.edn
+├── build.clj
+├── src/alice/reading_list.clj
+└── test/alice/reading_list_test.clj
+----
+
+(`deps-new` also generates a `README.md`, `CHANGELOG.md`, `LICENSE`, and a `doc/` folder — ignore those for now.)
+
+== `deps.edn`
+
+This file is the whole project's configuration — dependencies, source paths, and named command shortcuts called _aliases_. Open it:
+
+[source,clojure]
+----
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.1"}}
+ :aliases
+ {:run-m {:main-opts ["-m" "alice.reading-list"]}
+  :run-x {:ns-default alice.reading-list
+          :exec-fn greet
+          :exec-args {:name "Clojure"}}
+  :build {:deps {io.github.clojure/tools.build
+                 {:mvn/version "0.10.9"}}
+          :ns-default build}
+  :test {:extra-paths ["test"]
+         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
+                      io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}}}
+----
+
+`:paths` lists where your own source lives. `:deps` lists libraries to download from Maven — right now, just Clojure itself. Everything under `:aliases` is a named recipe for running the CLI a particular way; you invoke one with `-M` (for JVM main-opts, like `-main` arguments), `-X` (for calling a specific function with a map of arguments), or `-T` (for build/tooling tasks, kept separate from your application's own dependencies). You'll use all three before this chapter is done, and <<ch-4-5-tooling-deep-dive,4.5>> comes back to exactly what distinguishes them.
+
+== The generated source
+
+`src/alice/reading_list.clj`:
+
+[source,clojure]
+----
+(ns alice.reading-list
+  (:gen-class))
+
+(defn greet
+  "Callable entry point to the application."
+  [data]
+  (println (str "Hello, " (or (:name data) "World") "!")))
+
+(defn -main
+  "I don't do a whole lot ... yet."
+  [& args]
+  (greet {:name (first args)}))
+----
+
+Run it with the `:run-m` alias:
+
+[source,shell]
+----
+$ clojure -M:run-m
+Hello, World!
+$ clojure -M:run-m Clojure
+Hello, Clojure!
+----
+
+The first run prints `Hello, World!` because `-main` is called with no command-line arguments, so `(first args)` is `nil` and `greet` falls back to `"World"`. The second passes `Clojure` as an argument.
+
+You can also call `greet` directly, without going through `-main` at all, using the `:run-x` alias — this is the `-X` "call a function with a map of args" style mentioned above:
+
+[source,shell]
+----
+$ clojure -X:run-x
+Hello, Clojure!
+----
+
+== A test that's supposed to fail
+
+Open `test/alice/reading_list_test.clj`:
+
+[source,clojure]
+----
+(ns alice.reading-list-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [alice.reading-list :as sut])) ; system under test
+
+(deftest a-test
+  (testing "FIXME, I fail."
+    (is (= 0 1))))
+----
+
+`deps-new` ships this file with a deliberately failing test — the name and the `"FIXME"` message are the tool's way of making sure you actually look at your test output instead of assuming everything's fine. Run it:
+
+[source,shell]
+----
+$ clojure -T:build test
+...
+FAIL in (a-test) (reading_list_test.clj:7)
+FIXME, I fail.
+expected: (= 0 1)
+  actual: (not (= 0 1))
+
+Ran 1 tests containing 1 assertions.
+1 failures, 0 errors.
+Execution error (ExceptionInfo) at build/test (build.clj:17).
+Tests failed
+----
+
+That's `clojure.test` telling you, honestly, that `0` is not `1`. It's a strange first test to see pass, so let's write a real one instead. Replace the file's contents with:
+
+[source,clojure]
+----
+(ns alice.reading-list-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [alice.reading-list :as sut])) ; system under test
+
+(deftest greet-test
+  (testing "greets the given name"
+    (is (= "Hello, Clojure!\n"
+           (with-out-str (sut/greet {:name "Clojure"}))))))
+----
+
+`with-out-str` captures anything `greet` prints instead of letting it go to the terminal, so the test can check it against an expected string. Run the tests again:
+
+[source,shell]
+----
+$ clojure -T:build test
+...
+Ran 1 tests containing 1 assertions.
+0 failures, 0 errors.
+----
+
+We'll come back to `clojure.test` properly, including how to run tests from inside the REPL as you write code rather than from the command line, in <<ch-3-3-testing,Testing>>. For now, notice what just happened: you have a project with real source, a real dependency manager, and a real (if tiny) test suite, all runnable with a single command. That's everything <<ch-1-3-hello-production,1.3>> needs to turn this into something running in production.

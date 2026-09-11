@@ -1,0 +1,298 @@
+[#ch-3-4-project-checkpoint-web-api]
+= Project Checkpoint: A Web API, Deployed Again
+
+`reading-list` has been live at a real URL since <<ch-1-3-hello-production,1.3>>, saying exactly one thing: `Hello, production!`. Time to give it a job. This checkpoint turns it into a small but genuine web API — one that stores bookmarks, backed by the state you learned to manage in <<ch-3-1-state-and-identity,State & Identity>>, exercised by the tests you just learned to write in <<ch-3-3-testing,Testing>> — and redeploys it to the exact same Fly.io app you already set up. Nothing about the deploy story changes; only the program running behind it grows up.
+
+== The API
+
+A tiny REST API for bookmarks:
+
+[cols="1,2,3"]
+|===
+| Method | Path | Does
+
+| `GET`    | `/health`        | Returns `200` if the service is up.
+| `GET`    | `/bookmarks`     | Lists all bookmarks.
+| `POST`   | `/bookmarks`     | Creates a bookmark from a JSON body (`url`, `title`).
+| `GET`    | `/bookmarks/:id` | Fetches one bookmark, or `404`.
+| `DELETE` | `/bookmarks/:id` | Removes one bookmark.
+|===
+
+== Adding dependencies
+
+Three things get us there: http-kit (already in `deps.edn` since 1.3) to keep serving requests, https://github.com/metosin/reitit[reitit] for routing requests to the right function based on method and path, and `ring-json` for translating between JSON on the wire and Clojure data internally.
+
+[source,clojure]
+----
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.1"}
+        http-kit/http-kit {:mvn/version "2.8.0"}
+        metosin/reitit-ring {:mvn/version "0.7.2"}
+        ring/ring-json {:mvn/version "0.5.1"}}
+ :aliases
+ {:run-m {:main-opts ["-m" "alice.reading-list"]}
+  :build {:deps {io.github.clojure/tools.build
+                 {:mvn/version "0.10.9"}}
+          :ns-default build}
+  :test {:extra-paths ["test"]
+         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
+                      io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}}}
+----
+
+Notice the dependency is `metosin/reitit-ring`, not the more commonly-mentioned `metosin/reitit`. The plain `reitit` artifact is an umbrella that pulls in schema validation, OpenAPI/Swagger support, and several other modules you don't need yet — a much heavier dependency tree for a first web API than the job requires. `reitit-ring` alone is enough to route HTTP requests, and pulls in only `reitit-core` and Ring itself:
+
+[source,shell]
+----
+$ clojure -Stree
+...
+metosin/reitit-ring 0.7.2
+  . metosin/reitit-core 0.7.2
+    . meta-merge/meta-merge 1.0.0
+  . ring/ring-core 1.12.2
+    ...
+ring/ring-json 0.5.1
+  . cheshire/cheshire 5.10.0
+    ...
+----
+
+You can always add the rest of the `reitit` family later, once you actually need OpenAPI docs or spec-based coercion. Starting minimal and adding dependencies when a real need shows up, rather than reaching for the biggest umbrella package up front, is a habit worth keeping well beyond this book.
+
+== Persistence: an atom-backed store
+
+Bookmarks need somewhere to live. A single in-memory atom, holding a map from id to bookmark, is exactly the pattern from <<ch-3-1-state-and-identity,State & Identity>> — new file, `src/alice/store.clj`:
+
+[source,clojure]
+----
+(ns alice.store)
+
+(defonce bookmarks (atom {}))
+(defonce next-id (atom 0))
+
+(defn add! [{:keys [url title]}]
+  (let [id (swap! next-id inc)
+        bookmark {:id id :url url :title title}]
+    (swap! bookmarks assoc id bookmark)
+    bookmark))
+
+(defn all []
+  (vals @bookmarks))
+
+(defn by-id [id]
+  (get @bookmarks id))
+
+(defn delete! [id]
+  (swap! bookmarks dissoc id)
+  nil)
+----
+
+`defonce` (rather than `def`) matters here for a REPL-specific reason: if you re-evaluate this whole file while developing — which you will, constantly — a plain `def` would reset `bookmarks` back to `{}` every time, silently wiping out whatever you'd added while testing. `defonce` only creates the atom the *first* time the file loads, leaving it alone on subsequent reloads.
+
+This store is intentionally the simplest thing that works: everything lives in memory and disappears on restart. That's a real, honest limitation, not an oversight — a durable database is out of scope for this book, and the atom-based approach is enough to demonstrate everything from routing to redeployment without a database's setup cost getting in the way.
+
+== Routing and handlers
+
+New file, `src/alice/handler.clj`:
+
+[source,clojure]
+----
+(ns alice.handler
+  (:require [reitit.ring :as ring]
+            [ring.middleware.json :refer [wrap-json-body wrap-json-response]]
+            [alice.store :as store]))
+
+(defn health [_request]
+  {:status 200 :body {:status "ok"}})
+
+(defn list-bookmarks [_request]
+  {:status 200 :body (store/all)})
+
+(defn create-bookmark [request]
+  (let [bookmark (store/add! (:body request))]
+    {:status 201 :body bookmark}))
+
+(defn get-bookmark [request]
+  (let [id (parse-long (get-in request [:path-params :id]))]
+    (if-let [bookmark (store/by-id id)]
+      {:status 200 :body bookmark}
+      {:status 404 :body {:error "not found"}})))
+
+(defn delete-bookmark [request]
+  (let [id (parse-long (get-in request [:path-params :id]))]
+    (store/delete! id)
+    {:status 204}))
+
+(def router
+  (ring/router
+   [["/health" {:get health}]
+    ["/bookmarks" {:get list-bookmarks
+                   :post create-bookmark}]
+    ["/bookmarks/:id" {:get get-bookmark
+                        :delete delete-bookmark}]]))
+
+(def app
+  (-> (ring/ring-handler router (ring/create-default-handler))
+      (wrap-json-body {:keywords? true})
+      (wrap-json-response)))
+----
+
+Each handler is an ordinary function from a request map to a response map — the same Ring convention `handler` used back in <<ch-1-3-hello-production,1.3>>, just several of them now, dispatched by `reitit.ring/router` based on method and path. `:id` in a route pattern like `"/bookmarks/:id"` becomes available as a string under `(get-in request [:path-params :id])`; `parse-long` (a Clojure 1.11+ built-in) turns it back into a number.
+
+`wrap-json-body` and `wrap-json-response` are _middleware_ — functions that wrap a handler to add behavior around every request. Wrapped around `app` in that order, they mean: parse incoming JSON request bodies into Clojure maps (with `:keywords? true` turning `"url"` into `:url`) before your handler ever sees them, and serialize whatever Clojure data your handler returns back into JSON before the client sees it. Your handlers never touch JSON text directly — just Clojure maps.
+
+=== A bug worth hitting on purpose
+
+It's tempting to write `create-bookmark` using `:body-params` instead of `:body`, since `:body-params` sounds like exactly the right name for "the parsed body":
+
+[source,clojure]
+----
+(defn create-bookmark [request]
+  (let [bookmark (store/add! (:body-params request))]  ; looks reasonable...
+    {:status 201 :body bookmark}))
+----
+
+Try it, and the bug is subtle: the response comes back with an `id`, but `url` and `title` are both `null`. Nothing throws — it just silently doesn't work. The fix is to check what `wrap-json-body` actually promises, which means reading its source rather than guessing twice:
+
+[source,clojure]
+----
+;; from ring.middleware.json:
+;; "Reads the body of a JSON request into a Clojure data structure and
+;; replaces the :body key with the parsed data structure."
+----
+
+It replaces `:body`, not `:body-params` — that key belongs to a different, unrelated Ring middleware (`wrap-params`, used for query strings and form posts). The version at the top of this section, using `(:body request)`, is correct. This is a small example of a genuinely useful debugging habit: when a library behaves unexpectedly and the docstring doesn't settle it, the source is usually one `find-doc` or GitHub search away, and it's authoritative in a way that guessing isn't.
+
+== Wiring it into `-main`
+
+Replace `src/alice/reading_list.clj`'s handler with the new router:
+
+[source,clojure]
+----
+(ns alice.reading-list
+  (:require [org.httpkit.server :as http]
+            [alice.handler :as handler])
+  (:gen-class))
+
+(defn -main [& _args]
+  (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
+    (http/run-server handler/app {:port port})
+    (println (str "Listening on port " port))))
+----
+
+The old inline `handler` function from 1.3 is gone, replaced by `alice.handler/app`. Also delete `test/alice/reading_list_test.clj` from 1.3 if you still have it — it tested that old inline function directly, which no longer exists; its coverage is superseded by the handler tests below.
+
+== Testing it
+
+New file, `test/alice/handler_test.clj`, using `use-fixtures` (mentioned at the end of <<ch-3-3-testing,Testing>>) to reset the store before each test so tests can't interfere with each other:
+
+[source,clojure]
+----
+(ns alice.handler-test
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+            [alice.handler :as handler]
+            [alice.store :as store]))
+
+(use-fixtures :each
+  (fn [f]
+    (reset! store/bookmarks {})
+    (reset! store/next-id 0)
+    (f)))
+
+(deftest create-and-list-test
+  (testing "creating a bookmark makes it show up in the list"
+    (handler/create-bookmark {:body {:url "https://clojure.org" :title "Clojure"}})
+    (let [response (handler/list-bookmarks {})]
+      (is (= 200 (:status response)))
+      (is (= 1 (count (:body response)))))))
+
+(deftest get-missing-bookmark-test
+  (testing "getting a bookmark that doesn't exist returns 404"
+    (let [response (handler/get-bookmark {:path-params {:id "999"}})]
+      (is (= 404 (:status response))))))
+
+(deftest delete-bookmark-test
+  (testing "deleting a bookmark removes it"
+    (handler/create-bookmark {:body {:url "https://clojure.org" :title "Clojure"}})
+    (handler/delete-bookmark {:path-params {:id "1"}})
+    (is (= 0 (count (:body (handler/list-bookmarks {})))))))
+----
+
+Notice these tests call the handler functions directly with hand-built request maps — no HTTP, no running server, no port. That's a deliberate benefit of Ring's "just a function" design: you can test routing logic and business logic without paying for a network round trip at all. Run them:
+
+[source,shell]
+----
+$ clojure -T:build test
+Running tests in #{"test"}
+
+Testing alice.handler-test
+
+Ran 3 tests containing 4 assertions.
+0 failures, 0 errors.
+----
+
+== Trying it locally
+
+[source,shell]
+----
+clojure -M:run-m
+----
+
+In another terminal:
+
+[source,shell]
+----
+$ curl -s http://localhost:8080/health
+{"status":"ok"}
+
+$ curl -s -X POST http://localhost:8080/bookmarks \
+    -H "Content-Type: application/json" \
+    -d '{"url":"https://clojure.org","title":"Clojure"}'
+{"id":1,"url":"https://clojure.org","title":"Clojure"}
+
+$ curl -s -X POST http://localhost:8080/bookmarks \
+    -H "Content-Type: application/json" \
+    -d '{"url":"https://clojure.org/guides/deps_and_cli","title":"Deps and CLI"}'
+{"id":2,"url":"https://clojure.org/guides/deps_and_cli","title":"Deps and CLI"}
+
+$ curl -s http://localhost:8080/bookmarks
+[{"id":1,"url":"https://clojure.org","title":"Clojure"},{"id":2,"url":"https://clojure.org/guides/deps_and_cli","title":"Deps and CLI"}]
+
+$ curl -s http://localhost:8080/bookmarks/1
+{"id":1,"url":"https://clojure.org","title":"Clojure"}
+
+$ curl -s -w " [%{http_code}]" http://localhost:8080/bookmarks/999
+{"error":"not found"} [404]
+
+$ curl -s -o /dev/null -w "%{http_code}\n" -X DELETE http://localhost:8080/bookmarks/1
+204
+
+$ curl -s http://localhost:8080/bookmarks
+[{"id":2,"url":"https://clojure.org/guides/deps_and_cli","title":"Deps and CLI"}]
+----
+
+A full CRUD cycle, all in-memory, all local.
+
+== Redeploying
+
+This is the part worth pausing on: nothing about the deploy story from <<ch-1-3-hello-production,1.3>> needs to change. The `Dockerfile` you wrote back then already copies your entire `src` and `test` directories and runs `clojure -T:build ci` — it doesn't know or care how many files live under those directories, so the new `store.clj` and `handler.clj` get picked up automatically. Rebuild and redeploy exactly as before:
+
+[source,shell]
+----
+docker build -t reading-list .
+fly deploy
+----
+
+Confirm it against the live URL:
+
+[source,shell]
+----
+$ curl -s https://your-app-name.fly.dev/health
+{"status":"ok"}
+----
+
+The same app, same URL, same deploy pipeline — just running real code now instead of a placeholder string. This is the habit loop this book keeps coming back to: a change lands, tests confirm it works, and it goes live, all without any deploy-specific ceremony beyond the one-time setup from Part 1.
+
+== Try it yourself
+
+* Add a `PUT /bookmarks/:id` endpoint to update a bookmark's title, backed by a new `alice.store/update!` function.
+* Add validation: `POST /bookmarks` should return a `400` with an error body if `url` is missing, using `ex-info`/`ex-data` from <<ch-3-2-error-handling,Error Handling>> to carry the validation failure out of a helper function and into the handler.
+* Add a test for the `create-bookmark`/`:body-params` bug from this chapter directly — write an assertion that would have caught it, so it can't come back unnoticed.

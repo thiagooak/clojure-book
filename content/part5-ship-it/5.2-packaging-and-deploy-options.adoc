@@ -1,0 +1,94 @@
+[#ch-5-2-packaging-and-deploy]
+= Packaging & Deploy Options
+
+<<ch-1-3-hello-production,1.3>> picked one path — uberjar plus a multi-stage Docker build — and never looked back, deliberately, so you'd have one working deploy before worrying about alternatives. Now that you've shipped `reading-list` twice, it's worth understanding what you actually chose, and what the other real options trade away.
+
+== The uberjar, revisited
+
+<<ch-4-5-tooling-deep-dive,Tooling Deep Dive>> walked through exactly what `clojure -T:build ci` does: AOT-compile your `-main` namespace, then bundle it with every dependency's classes into one self-contained `.jar`. The result runs anywhere a JVM does, with `java -jar`:
+
+[source,shell]
+----
+$ java -jar target/net.clojars.alice/reading-list-0.1.0-SNAPSHOT.jar
+Listening on port 8080
+----
+
+The tradeoff is startup time — a real JVM has to boot before your code runs a single line. Measuring it directly, timing from process launch to the server's first successful response:
+
+[source,shell]
+----
+$ time java -jar target/.../reading-list-0.1.0-SNAPSHOT.jar &
+# (polling curl against /health until it responds)
+elapsed: ~280-365ms
+----
+
+A few hundred milliseconds is invisible to a human clicking around a web page, and completely irrelevant once the process is up and serving thousands of requests — this is a *startup* cost, paid once per process, not a per-request cost. It matters specifically when something restarts your process often: a serverless platform that spins up a fresh instance per request, or a container orchestrator scaling instances up and down aggressively. For `reading-list`, deployed as one long-running Fly.io instance, it's a non-issue.
+
+== Docker, revisited
+
+The multi-stage `Dockerfile` from <<ch-1-3-hello-production,1.3>> keeps the final image lean by never shipping the Clojure CLI, Maven cache, or source `.clj` files that were only needed to *build* the jar:
+
+[source,dockerfile]
+----
+FROM clojure:temurin-21-tools-deps AS build
+WORKDIR /build
+COPY deps.edn build.clj ./
+COPY src src
+RUN clojure -T:build ci
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /build/target/*.jar app.jar
+CMD ["java", "-jar", "app.jar"]
+----
+
+The `eclipse-temurin:21-jre-alpine` base in the second stage is doing real work here: a *JRE* (runtime only, no compiler/tooling) on *Alpine* (a minimal Linux distribution) is meaningfully smaller than a full JDK image, and smaller images pull faster on every deploy — the difference between a Fly.io deploy that takes a few seconds and one that takes a minute. This is the default this book recommends, and the one `reading-list` uses in production: it needs no new language runtime, works with any JVM library without exception, and the startup cost is a rounding error for a long-running server.
+
+== GraalVM native-image: informational only
+
+You may have heard that Clojure programs can be compiled all the way to a native executable with GraalVM's `native-image`, eliminating JVM startup time entirely — sub-10ms starts are typical for small programs. That's a real, well-documented capability, and worth knowing exists, but it comes with real friction this book won't pretend away:
+
+* It requires GraalVM specifically (not a normal JDK), and a separate, often slow (multi-minute) build step distinct from the ordinary `clojure -T:build ci` you've used throughout this book.
+* Reflection-heavy code, dynamic classloading, and some Java interop patterns need explicit configuration (or don't work at all) under `native-image`'s closed-world assumptions — libraries need to be specifically tested and supported for it, and not all of the Clojure ecosystem is.
+* The payoff — near-instant startup — matters most for CLIs and serverless functions, less for a long-running server like `reading-list`.
+
+This book won't walk you through a `native-image` build, deliberately — this environment doesn't have GraalVM installed, and every code example in this book is one you've seen actually run. If `reading-list` ever became a CLI tool distributed to end users, or a function on a platform that bills per-invocation and restarts constantly, `native-image` would be worth the investment. As a long-running web server, it isn't, and the uberjar you already have is the right tool.
+
+== Babashka: a genuinely different runtime
+
+https://babashka.org/[Babashka] takes a different approach entirely: instead of compiling Clojure to run faster on the JVM, it's a *separate*, native-compiled interpreter for (most of) Clojure, built specifically for instant-start scripting. Where does it actually stand next to what you've measured above? Run the same experiment — an http-kit server (which Babashka bundles natively, no extra dependency needed), timed from process launch to first response:
+
+[source,clojure]
+----
+;; server.clj
+(require '[org.httpkit.server :as http])
+
+(defn handler [_req]
+  {:status 200 :body "ok"})
+
+(http/run-server handler {:port 8081})
+(println "Listening on port 8081")
+@(promise)
+----
+
+[source,shell]
+----
+$ time bb server.clj
+elapsed: ~47-55ms
+----
+
+That's roughly five to seven times faster to first response than the uberjar measured above, on the same machine, doing the same job. The catch is real, not hypothetical: Babashka interprets a substantial, practical subset of Clojure and bundles a curated set of libraries (`http-kit`'s server *and* client, `clojure.data.json`, `clojure.java.jdbc`'s basics, and more — run `bb describe` for the full feature list), but it doesn't run arbitrary JVM libraries. `reading-list`'s actual `alice.handler` — built on `reitit-ring` and `ring-json`, neither of which Babashka bundles — wouldn't run under `bb` unmodified. You'd need to hand-roll routing (a `cond` on `[request-method uri]` is often plenty for a small service) and JSON handling (`clojure.data.json`, which *is* bundled) instead of reaching for those libraries.
+
+That tradeoff makes Babashka the right tool for a specific, common shape of problem: small scripts, CLIs, and glue code — a deploy hook, a data migration run once, a cron job — where startup time dominates and you don't need the wider JVM library ecosystem. It is not a drop-in replacement for a full web application built on JVM libraries like `reading-list`'s. Knowing it exists, and what it's actually for, is the useful takeaway; reaching for it reflexively in place of the JVM is not.
+
+== Which one, for what
+
+* **Uberjar + Docker** (what `reading-list` uses) — the default for anything long-running: web servers, background workers, anything where startup happens once and then the process serves traffic for hours or days. Full access to the entire JVM library ecosystem.
+* **GraalVM `native-image`** — CLIs distributed to end users, or platforms that restart your process constantly (aggressive serverless scaling) where startup time is a real, recurring cost. Requires checking library compatibility and a heavier build step.
+* **Babashka** — scripts, small CLIs, and glue code where you control (or can limit) the dependencies, and instant startup matters more than access to the full JVM ecosystem.
+
+== Try it yourself
+
+* Time `docker run` for `reading-list`'s image the same way this chapter timed `java -jar` directly — does containerizing it add meaningfully to the startup measured here?
+* Rewrite `server.clj` above to respond with a JSON body using `clojure.data.json` (bundled with Babashka) instead of a plain string, and confirm it still starts in roughly the same time.
+* Read Babashka's own https://book.babashka.org/[book] section on `bb.edn` and community pods — what would actually be required to get something like `reitit-ring` working under `bb`, if anything?

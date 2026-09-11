@@ -1,0 +1,61 @@
+[#ch-b-glossary]
+= Appendix: Glossary
+
+Short definitions for terms this book uses often, especially the ones that trip up newcomers coming from non-Lisp languages. Each entry links to the chapter that actually teaches the concept — treat this page as a quick lookup, not a replacement for reading that chapter.
+
+arity::
+The number of arguments a function accepts. A function can have multiple arities (different behavior depending on how many arguments it's called with) defined in one `defn`. See <<ch-2-2-functions,Functions>>.
+
+atom::
+A mutable reference type holding a single value, updated safely (including under concurrent access) via `swap!` or `reset!`. The tool this book uses for state that needs to change over time. See <<ch-3-1-state-and-identity,State & Identity>>.
+
+deps.edn::
+The Clojure CLI's project configuration file — dependencies, source paths, and named aliases, all as plain Clojure data. See <<ch-1-2-hello-program,Hello, Program>> and <<ch-4-5-tooling-deep-dive,Tooling Deep Dive>>.
+
+destructuring::
+A binding pattern that pulls values out of a collection or map directly in a `let`, function parameter list, or `for`, instead of looking them up one field at a time. See <<ch-2-2-functions,Functions>>.
+
+EDN::
+"Extensible Data Notation" — the plain-data subset of Clojure syntax (maps, vectors, keywords, numbers, strings, and so on, with no code) used for configuration files like `deps.edn` and for data interchange generally. See <<ch-2-1-syntax,Syntax & the Reader>>.
+
+form::
+Any single unit of Clojure code the reader can parse into one piece of data — a literal like `42`, a symbol like `x`, or a whole list like `(+ 1 2)`. "Evaluate this form" means "evaluate this one expression." See <<ch-2-1-syntax,Syntax & the Reader>>.
+
+keyword::
+A symbolic identifier prefixed with `:` (like `:name`) that evaluates to itself and is commonly used as a map key — and, notably, is itself a function that looks itself up in a map. See <<ch-2-4-hashed-collections,Hashed Collections>>.
+
+macro::
+A function that runs at compile time on your code as data, and emits new code to actually be compiled — the mechanism behind `defn`, `->`, and `when`. A deliberately rare tool for most day-to-day code. See <<ch-4-4-macros,Macros>>.
+
+multimethod::
+A dispatch mechanism (`defmulti`/`defmethod`) that picks which implementation to run based on the result of an arbitrary function applied to the arguments, rather than the type of the first argument the way protocols do. See <<ch-4-3-polymorphism,Polymorphism>>.
+
+namespace::
+A named container for vars — Clojure's unit of code organization, roughly analogous to a module or package in other languages. Conventionally one namespace per file, with the namespace name mirroring the file's path. See <<ch-2-6-namespaces,Namespaces>>.
+
+persistent data structure::
+An immutable collection that supports efficient "modification" by returning a new, structurally-shared version rather than mutating in place — the reason `assoc`-ing a huge map doesn't copy the whole thing. See <<ch-2-3-sequential-collections,Sequential Collections>>.
+
+protocol::
+A named set of function signatures that different types can implement differently (via `defrecord` or `extend-protocol`), dispatched on the type of the first argument — Clojure's answer to interfaces. See <<ch-4-3-polymorphism,Polymorphism>>.
+
+reader::
+The part of Clojure that parses source text into plain Clojure data, before anything is compiled or run. The reader is what `'` (quote) suspends — quoting a form returns the data the reader produced, unevaluated. See <<ch-2-1-syntax,Syntax & the Reader>>.
+
+record::
+A structured, named type (`defrecord`) that behaves like a map but has an actual class identity, most useful as the implementation side of a protocol. See <<ch-2-4-hashed-collections,Hashed Collections>> and <<ch-4-3-polymorphism,Polymorphism>>.
+
+REPL::
+"Read, Eval, Print, Loop" — a running Clojure process you send expressions to one at a time and get results back from immediately, instead of running a whole program from scratch on every change. The central habit this whole book is built around. See <<ch-1-1-hello-repl,Hello, REPL>>.
+
+special form::
+One of a small, fixed set of syntactic constructs (`if`, `def`, `let`, `fn`, `quote`, and a handful of others) built directly into the compiler rather than defined as functions or macros in terms of anything more primitive. See <<ch-2-1-syntax,Syntax & the Reader>> and <<ch-2-5-flow-control,Flow Control>>.
+
+symbol::
+An identifier, like `x` or `my-function`, that the compiler resolves to whatever value its name is bound to — distinct from a keyword, which always evaluates to itself. See <<ch-2-1-syntax,Syntax & the Reader>>.
+
+uberjar::
+A single, self-contained `.jar` file bundling your compiled code together with every one of its dependencies' classes, runnable anywhere a JVM is with `java -jar`. See <<ch-1-3-hello-production,Hello, Production>> and <<ch-4-5-tooling-deep-dive,Tooling Deep Dive>>.
+
+var::
+The mutable-at-the-top-level storage location a symbol like a function name or `def`'d value actually resolves to — what `def` creates, and what `#'my-function` refers to directly rather than to the value it currently holds. See <<ch-1-1-hello-repl,Hello, REPL>> and <<ch-2-6-namespaces,Namespaces>>.

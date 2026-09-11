@@ -1,0 +1,97 @@
+[#ch-0-2-install]
+= Install the One Blessed Toolchain
+
+There is more than one way to write and run Clojure. This book deliberately shows you exactly one of each thing you need, the way `rustup` gives Rust programmers exactly one installer and one toolchain manager. Once you've finished this book you'll be well equipped to go explore the alternatives — and Clojure has many, all legitimate — but a first-timer doesn't need a menu, they need a path. Here's the path.
+
+By the end of this page you'll have:
+
+* the Clojure CLI,
+* an editor wired up to a running Clojure process,
+* Docker, and
+* git
+
+all installed and confirmed working.
+
+== The Clojure CLI
+
+The `clojure`/`clj` command-line tools are the official, Clojure/core-maintained way to run Clojure code, manage dependencies, and start a REPL. Everything in this book assumes they're on your `PATH`.
+
+**macOS** (via https://brew.sh[Homebrew]):
+
+[source,shell]
+----
+brew install clojure/tools/clojure
+----
+
+**Linux**: use the install script from the official guide:
+
+[source,shell]
+----
+curl -O https://download.clojure.org/install/linux-install-1.12.1.1550.sh
+chmod +x linux-install-1.12.1.1550.sh
+sudo ./linux-install-1.12.1.1550.sh
+----
+
+(Check https://clojure.org/guides/install_clojure[the official install guide] for the current script version — Clojure releases a new one periodically, and an old link will still work but won't be the newest release.)
+
+**Windows**: install via https://scoop.sh[Scoop]:
+
+[source,shell]
+----
+scoop bucket add extras
+scoop install clojure
+----
+
+Confirm it worked:
+
+[source,shell]
+----
+clojure -M -e "(println \"Clojure is installed.\")"
+----
+
+You should see `Clojure is installed.` printed, possibly after a short pause the first time while it downloads some dependencies.
+
+NOTE: You'll also need a Java Development Kit (JDK) — Clojure runs on the JVM. If the command above fails with something about `java` not being found, install a JDK first (Temurin 21 is a safe, free, widely-used choice — https://adoptium.net[adoptium.net]) and try again.
+
+== An editor with a REPL
+
+You _can_ write Clojure in any text editor and run it from a terminal. You shouldn't, at least not while learning. The single biggest difference between writing Clojure and writing most other languages is that you keep a REPL running the whole time and send it code directly from your editor, one expression at a time, instead of running your whole program from scratch after every change. This book is written assuming you're working that way from <<ch-1-1-hello-repl,1.1>> onward.
+
+This book's lead recommendation is **Calva**, an extension for **Visual Studio Code**:
+
+. Install https://code.visualstudio.com/[VS Code] if you don't already have it.
+. Inside VS Code, open the Extensions panel and install **Calva**.
+
+That's it — no separate download, no configuration file to write by hand. Calva is free, actively maintained, and gets you a working, editor-connected REPL faster than any other option for someone who's never done this before.
+
+If you already have a strong preference for **IntelliJ** (via the **Cursive** plugin) or **Emacs** (via **CIDER**), both are excellent, well-established choices used daily by experienced Clojure developers, and full setup instructions for both are in <<ch-a-editor-setup,Appendix A>>. This book's examples don't depend on which one you pick — "connect your editor to a REPL and evaluate an expression" looks slightly different in each, but means the same thing everywhere.
+
+== Docker
+
+Starting in <<ch-1-3-hello-production,1.3>>, you'll package your program into a container and deploy it. Install Docker Desktop for your platform from https://www.docker.com/products/docker-desktop/[docker.com] now, so it's not a surprise later.
+
+Confirm it worked:
+
+[source,shell]
+----
+docker run hello-world
+----
+
+This should print a short message confirming Docker downloaded and ran a container successfully.
+
+== git
+
+You don't strictly need git to follow along with the code in this book, but you'll want it for <<ch-5-3-final-project,Part 5's>> CI/CD pipeline, and for keeping your own project's history as you go. If `git --version` doesn't already print something in your terminal, install it from https://git-scm.com/downloads[git-scm.com].
+
+== Smoke test
+
+Before moving on, confirm all four pieces are in place with one command each:
+
+[source,shell]
+----
+clojure -M -e "(println \"clojure ok\")"
+docker run hello-world
+git --version
+----
+
+If all three succeed, you're ready for <<ch-1-1-hello-repl,Hello, REPL>>.

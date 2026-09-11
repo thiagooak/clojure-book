@@ -1,0 +1,189 @@
+[#ch-1-3-hello-production]
+= Hello, Production
+
+This is the chapter the rest of the book is built around. You don't know much Clojure yet — a REPL session and a `-main` function that prints a greeting. That's enough. By the end of this chapter, that program will be running at a real URL on the public internet, and it will stay there, growing, for the rest of the book. It gets a real web API and persistence in <<ch-3-4-project-checkpoint-web-api,3.4>>, and a production-grade CI/CD pipeline in <<ch-5-3-final-project,the final project>>. Nothing here is a one-off demo you'll throw away.
+
+If you're coming from a language with a more established "hello world to hosted" story, this whole chapter might feel like overkill for a program that just prints one line. It is, on purpose — the point isn't the program, it's proving the *path* works, once, on your machine, before any real complexity shows up to confuse the issue.
+
+== From a script to a server
+
+`reading-list`'s `-main` function currently prints a line and exits. A deployed service needs to keep running and answer requests. Add http-kit — a small, dependency-free HTTP server — to `deps.edn`:
+
+[source,clojure]
+----
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.1"}
+        http-kit/http-kit {:mvn/version "2.8.0"}}
+ :aliases
+ {:run-m {:main-opts ["-m" "alice.reading-list"]}
+  :build {:deps {io.github.clojure/tools.build
+                 {:mvn/version "0.10.9"}}
+          :ns-default build}
+  :test {:extra-paths ["test"]
+         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
+                      io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}}}
+----
+
+(The `:run-x` alias from <<ch-1-2-hello-program,1.2>> called `greet`, which is about to disappear — it's removed above rather than left pointing at nothing.)
+
+Now replace `src/alice/reading_list.clj` entirely:
+
+[source,clojure]
+----
+(ns alice.reading-list
+  (:require [org.httpkit.server :as http])
+  (:gen-class))
+
+(defn handler [_request]
+  {:status 200
+   :headers {"Content-Type" "text/plain"}
+   :body "Hello, production!"})
+
+(defn -main [& _args]
+  (let [port (Integer/parseInt (or (System/getenv "PORT") "8080"))]
+    (http/run-server handler {:port port})
+    (println (str "Listening on port " port))))
+----
+
+A Ring handler — the convention almost every Clojure web library uses — is just a function from a request map to a response map. `handler` here ignores the request entirely and always returns the same response: status `200`, a plain-text content type, and a body. `-main` reads the port from an environment variable (falling back to `8080` for local runs, since production hosts assign their own port at runtime) and starts http-kit listening on it.
+
+Run it:
+
+[source,shell]
+----
+clojure -M:run-m
+----
+
+In another terminal:
+
+[source,shell]
+----
+$ curl http://localhost:8080/
+Hello, production!
+----
+
+Stop the server with `Ctrl+C`. That's the whole program. Now let's ship it.
+
+== Building an uberjar
+
+An _uberjar_ is a single `.jar` file containing your compiled code plus every dependency it needs — the standard way to hand a JVM program to something else to run, without that something else needing your source tree or your `deps.edn`. `deps-new` already scaffolded a `build.clj` with a `:build` alias that knows how to make one:
+
+[source,shell]
+----
+clojure -T:build ci
+----
+
+This runs your tests, then compiles and packages everything into `target/net.clojars.alice/reading-list-0.1.0-SNAPSHOT.jar`. Run the jar directly, with no `deps.edn` or Clojure CLI involved at all — just a JVM:
+
+[source,shell]
+----
+$ java -jar target/net.clojars.alice/reading-list-0.1.0-SNAPSHOT.jar
+Listening on port 8080
+----
+
+== Containerizing it
+
+Production hosts generally don't want "a jar file plus instructions for which JDK to install." They want a container image: something self-contained that runs the same way everywhere. Create a `Dockerfile` in the project root:
+
+[source,dockerfile]
+----
+FROM clojure:temurin-21-tools-deps AS build
+WORKDIR /build
+COPY deps.edn build.clj ./
+COPY src src
+COPY test test
+RUN clojure -T:build ci
+
+FROM eclipse-temurin:21-jre-alpine
+WORKDIR /app
+COPY --from=build /build/target/net.clojars.alice/reading-list-0.1.0-SNAPSHOT.jar app.jar
+EXPOSE 8080
+CMD ["java", "-jar", "app.jar"]
+----
+
+This is a _multi-stage_ build. The first stage uses a full Clojure CLI image to build the uberjar, exactly as you just did by hand. The second stage starts fresh from a much smaller image that only has a JRE (a Java *runtime*, no compiler or build tooling) and copies in just the finished jar. The result is a production image with no Clojure CLI, no source code, and no build tooling baked into it — smaller and with a lot less attack surface than if you packaged the build stage itself.
+
+Build and run it:
+
+[source,shell]
+----
+$ docker build -t reading-list .
+...
+$ docker run -p 8080:8080 reading-list
+Listening on port 8080
+----
+
+In another terminal:
+
+[source,shell]
+----
+$ curl http://localhost:8080/
+Hello, production!
+----
+
+You're now talking to your Clojure program running inside a container, exactly as a host like the one in the next section will run it. Stop it with `Ctrl+C`.
+
+== Deploying to Fly.io
+
+This book uses https://fly.io[Fly.io] as its one documented deploy target — it runs Docker images directly, has a workable free tier, and doesn't need anything beyond the `Dockerfile` you already have. If you'd rather use a different host, the shape of what follows (build an image, push it, get a URL back) transfers directly; check that host's own docs for the exact commands.
+
+. Install the `flyctl` CLI — instructions for your platform are at https://fly.io/docs/hands-on/install-flyctl/[fly.io/docs/hands-on/install-flyctl].
+. Sign up / log in:
++
+[source,shell]
+----
+fly auth login
+----
+. From inside your `reading-list` project directory, launch the app:
++
+[source,shell]
+----
+fly launch
+----
++
+`fly launch` detects the `Dockerfile`, asks you to pick an app name and a region, and generates a `fly.toml` configuration file. Decline the offers to attach a Postgres or Redis database — this program doesn't need one yet. A minimal generated `fly.toml` looks like this:
++
+[source,toml]
+----
+app = "your-app-name"
+primary_region = "iad"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1
+----
++
+The important line is `internal_port = 8080` — it has to match the port your program actually listens on, which is why `-main` reads `PORT` from the environment rather than hardcoding it: Fly sets that environment variable itself when it starts your container.
+. Deploy:
++
+[source,shell]
+----
+fly deploy
+----
++
+`fly deploy` builds your `Dockerfile` (either locally or on a remote builder, depending on your setup) and ships the resulting image to Fly's infrastructure. When it finishes, it prints the URL your app is now running at.
+. Confirm it's live:
++
+[source,shell]
+----
+$ curl https://your-app-name.fly.dev/
+Hello, production!
+----
+
+That response is coming from a real server, on the public internet, that anyone can reach — not your laptop. If you got here in under an hour, you've just validated the entire premise of this book.
+
+== What just happened, and what's next
+
+You didn't need to understand a single Clojure special form to do any of this. That's deliberate: the goal was proving the path — write code, containerize it, ship it — works end to end, before the language itself demands any of your attention. Bookmark your Fly.io URL; you'll be redeploying updates to this exact app in <<ch-3-4-project-checkpoint-web-api,3.4>> and again in <<ch-5-3-final-project,Part 5>>.
+
+Now that you have something running, it's time to actually learn the language that's running it. That starts in <<ch-2-1-syntax,Part 2>>.

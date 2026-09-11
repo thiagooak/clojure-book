@@ -1,0 +1,191 @@
+[#ch-4-2-java-interop]
+= Java Interop, In Depth
+
+<<ch-2-2-functions,Functions>> already showed you the basics — constructing objects, calling instance and static methods, reading static fields:
+
+[cols="1,1"]
+|===
+| Java | Clojure
+
+| `new Widget("foo")` | `(Widget. "foo")`
+| `Math.sqrt(25)` | `(Math/sqrt 25)`
+| `Math.PI` | `Math/PI`
+|===
+
+That's enough to read most Clojure code you'll encounter, and it's carried you all the way through this book so far. This chapter goes further, into the interop tools you reach for once you need to actually integrate with a real Java library: implementing interfaces, extending classes, working with arrays, and handling exceptions that cross the Java/Clojure boundary.
+
+== A real link checker
+
+<<ch-4-1-concurrency,Concurrency>> simulated checking whether bookmark URLs are reachable with `Thread/sleep`. Now let's do it for real, using the JDK's built-in HTTP client (`java.net.http`, no external library needed):
+
+[source,clojure]
+----
+(import (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers)
+        (java.net URI)
+        (java.time Duration))
+
+(def client (-> (HttpClient/newBuilder)
+                (.connectTimeout (Duration/ofSeconds 5))
+                (.build)))
+
+(defn check-url [url]
+  (let [request (-> (HttpRequest/newBuilder)
+                     (.uri (URI/create url))
+                     (.timeout (Duration/ofSeconds 5))
+                     (.GET)
+                     (.build))]
+    (try
+      (let [response (.send client request (HttpResponse$BodyHandlers/discarding))]
+        {:url url :status (.statusCode response)})
+      (catch Exception e
+        {:url url :status nil :error (.getSimpleName (class e))}))))
+----
+
+A few interop details worth calling out explicitly:
+
+* `import` brings Java class names into scope so you can refer to them without a fully-qualified package prefix, the way `require` does for Clojure namespaces.
+* `HttpClient/newBuilder`, with a slash, is a *static* method call — it belongs to the class itself, not an instance. Everything chained after it with `.method` (`.connectTimeout`, `.build`, `.uri`, `.timeout`, `.GET`) is an *instance* method call on whatever the previous step returned — exactly the "builder pattern" common in Java APIs, made readable here with `->`, the threading macro you've been using since Part 2.
+* `HttpResponse$BodyHandlers` — the `$` is how the JVM names a nested/inner class (`BodyHandlers` nested inside `HttpResponse`); you'll see this whenever you need to reach into a Java library's inner classes.
+
+Try it against a real URL and a nonexistent one:
+
+[source,clojure-repl]
+----
+user=> (check-url "https://clojure.org")
+{:url https://clojure.org, :status 200}
+user=> (check-url "https://this-domain-does-not-exist-abc123.example")
+{:url https://this-domain-does-not-exist-abc123.example, :status nil, :error ConnectException}
+----
+
+That `:error` field is worth a second look: a first attempt at this function might reasonably reach for `(.getMessage e)` inside the `catch` to describe what went wrong. Try it, and for a `java.net.ConnectException` on a nonexistent host, `.getMessage` returns `nil` — not every Java exception carries a useful message, and this is a real one that doesn't. `(.getSimpleName (class e))`, used above, gets the exception's class name instead (`"ConnectException"`), which is reliably present and, in this case, more informative than the message would have been anyway. Combine it with `pmap` from <<ch-4-1-concurrency,Concurrency>> and you have a real, parallel link-checker for every bookmark in `reading-list`'s store:
+
+[source,clojure-repl]
+----
+user=> (pmap check-url ["https://clojure.org" "https://clojure.org/guides"])
+({:url https://clojure.org, :status 200} {:url https://clojure.org/guides, :status 200})
+----
+
+== Implementing a Java interface: `reify`
+
+Some Java APIs expect you to hand them an object implementing a particular interface — a `Comparator`, a `Runnable`, a callback of some kind. `reify` creates an anonymous object implementing one or more interfaces (or protocols — the same construct works for both) right where you need it, without declaring a named class anywhere:
+
+[source,clojure-repl]
+----
+user=> (def by-length
+         (reify java.util.Comparator
+           (compare [_ a b]
+             (compare (count a) (count b)))))
+#'user/by-length
+user=> (sort by-length ["ccc" "a" "bb"])
+(a bb ccc)
+----
+
+`java.util.Collections`, `java.util.Comparator`-accepting methods, and plenty of other Java APIs are built around handing them exactly this kind of small, single-purpose object. `reify` is almost always what you want when a Java method just asks for "something implementing interface X."
+
+== Extending a concrete class: `proxy`
+
+`reify` only implements interfaces (and protocols) — it can't extend an actual class with its own behavior. For the rarer case where a Java API requires you to *subclass* something concrete (rather than implement an interface), use `proxy`:
+
+[source,clojure-repl]
+----
+user=> (def worker
+         (proxy [Thread] []
+           (run []
+             (println "running from a proxy Thread subclass"))))
+#'user/worker
+user=> (.start worker)
+nil
+running from a proxy Thread subclass
+user=> (.join worker)
+nil
+----
+
+`(proxy [Thread] [] ...)` creates an anonymous subclass of `Thread` (the empty second vector is for constructor arguments, none needed here) overriding `run`. You'll reach for `proxy` far less often than `reify` — most Java libraries you'll integrate with expect interfaces, not subclasses — but it's there when a library genuinely requires extending a base class.
+
+== `gen-class`, finally explained
+
+Every `-main` namespace since <<ch-1-2-hello-program,1.2>> has included `(:gen-class)` in its `ns` form, on faith, because `deps-new` put it there. Now you have enough context for what it actually does: it tells the Clojure compiler to generate a *real, named* `.class` file for this namespace — here, a class with a proper `public static void main(String[] args)` entry point — rather than the anonymous, dynamically-loaded classes Clojure normally compiles functions into. That's specifically what lets `java -jar your-app.jar` (which needs a real named entry-point class listed in the jar's manifest) work at all. You've been relying on this since your very first uberjar in <<ch-1-3-hello-production,1.3>>; outside of a `-main` namespace meant to be launched directly by the JVM, you won't need `:gen-class` — `reify`, `proxy`, and ordinary functions cover nearly everything else.
+
+== Exceptions across the boundary
+
+There's no separate "Java exception" type from Clojure's perspective — `ArithmeticException`, `NullPointerException`, and every other exception you've caught since <<ch-3-2-error-handling,Error Handling>> are ordinary Java classes, and `catch` matches on class the same way it would in Java, including multiple `catch` clauses for different exception types on the same `try`:
+
+[source,clojure-repl]
+----
+user=> (defn risky [n]
+         (cond
+           (zero? n) (/ 1 n)
+           (neg? n) (throw (IllegalArgumentException. "n must not be negative"))
+           :else n))
+#'user/risky
+user=> (doseq [n [-1 0 5]]
+         (try
+           (println "ok:" (risky n))
+           (catch ArithmeticException e
+             (println "arithmetic problem:" (.getMessage e)))
+           (catch IllegalArgumentException e
+             (println "bad argument:" (.getMessage e)))))
+bad argument: n must not be negative
+arithmetic problem: Divide by zero
+ok: 5
+nil
+----
+
+`catch` clauses are checked in order, like Java's — put more specific exception types before more general ones.
+
+When you need to wrap a low-level exception in your own `ex-info` context (say, adding which URL a request failure came from) without losing the original error, pass the original exception as `ex-info`'s third argument — its *cause* — and retrieve it later with `ex-cause`:
+
+[source,clojure-repl]
+----
+user=> (try
+         (try
+           (/ 1 0)
+           (catch ArithmeticException e
+             (throw (ex-info "risky failed" {:input 0} e))))
+         (catch Exception e
+           (println "wrapped message:" (ex-message e))
+           (println "cause:" (.getMessage (ex-cause e)))))
+wrapped message: risky failed
+cause: Divide by zero
+nil
+----
+
+Nothing about the original exception is lost — it's just attached, the same way Java's own exception chaining works, so a caller further up the stack can still get at the root cause if they need to.
+
+== Arrays
+
+Most Clojure code never touches a raw Java array — vectors and seqs cover almost everything — but some Java APIs specifically require one, either as an argument or as what they hand back to you:
+
+[source,clojure-repl]
+----
+user=> (def nums (int-array [1 2 3 4 5]))
+#'user/nums
+user=> (alength nums)
+5
+user=> (aget nums 2)
+3
+user=> (aset nums 2 99)
+99
+user=> (vec nums)
+[1 2 99 4 5]
+----
+
+`int-array` builds a primitive `int[]`; `alength`, `aget`, and `aset` are array-specific length/read/write operations (arrays are fixed-size and, unlike everything else in Clojure, genuinely mutable in place — `aset` really does overwrite the element). `vec` converts one back into an ordinary, immutable Clojure vector once you're done with whatever Java API demanded the array in the first place.
+
+For arrays of a reference type (not a JVM primitive like `int`), use `into-array` with the element type:
+
+[source,clojure-repl]
+----
+user=> (def strs (into-array String ["a" "b" "c"]))
+#'user/strs
+user=> (java.util.Arrays/toString strs)
+"[a, b, c]"
+----
+
+`java.util.Arrays/toString` is itself a Java interop call — Clojure's own `println`/`str` don't know how to render a raw Java array usefully, so reaching for the JDK's own utility class is the normal move here.
+
+== Try it yourself
+
+* Write a `reify` implementing `java.io.FileFilter` (a single-method interface — check its Javadoc) that only accepts files ending in `.clj`, and use it with `(.listFiles (java.io.File. ".") your-filter)`.
+* Extend `check-url` to catch a slow response specifically — lower the `Duration/ofSeconds` timeout to something very small and see which exception type comes back for a real, slow-but-reachable URL versus an unreachable one.
+* Write a function that wraps any exception thrown by a block of code in an `ex-info` carrying `{:attempted-at (java.time.Instant/now)}`, preserving the original as the cause, and confirm with `ex-cause` that the original is still reachable.

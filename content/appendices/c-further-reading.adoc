@@ -1,0 +1,47 @@
+[#ch-c-further-reading]
+= Appendix: Further Reading
+
+This book doesn't try to be everything. These are other resources worth
+your time, listed honestly along with what they're good for. None of their
+text is reproduced in this book — see `CONTRIBUTING.md` for why.
+
+== Books
+
+https://www.braveclojure.com/[Clojure for the Brave and True], by Daniel
+Higginbotham :: A full language and concurrency book with a distinctive,
+funny voice. Free to read online (not open-licensed — see its own site
+for terms). Doesn't cover deploying to production.
+
+https://pragprog.com/titles/vmclojeco/clojure-applied/[Clojure Applied],
+by Ben Vandgrift and Alex Miller :: Commercial. The closest existing
+precedent to this book's goals — its later chapters treat testing,
+integration, and deployment as first-class concerns rather than an
+afterthought.
+
+https://www.oreilly.com/library/view/living-clojure/9781491909270/[Living
+Clojure], by Carin Meier :: Commercial. A guided, exercise-driven tour of
+the language.
+
+== Guides and curricula
+
+https://practical.li/clojure/[Practicalli Clojure], by John "Jr0cket"
+Stevenson :: Extensive, actively maintained, CC BY-SA 4.0 licensed
+coverage of the CLI/REPL workflow, testing, spec, and CI. Its own
+deployment-focused guide was archived rather than kept current — worth
+knowing going in.
+
+https://github.com/ClojureBridge/curriculum[ClojureBridge Curriculum] ::
+CC BY 4.0 licensed workshop curriculum aimed at first-time programmers,
+good source of exercise ideas for early chapters.
+
+https://exercism.org/tracks/clojure[Exercism's Clojure Track] :: Free,
+mentored, exercise-by-exercise practice — a good companion once you're
+past this book's early chapters and want more reps.
+
+== Also worth knowing about
+
+https://github.com/functional-koans/clojure-koans[Clojure Koans] ::
+Fill-in-the-blank exercises covering language syntax.
+
+See `plan.md` section 2.3 for the fuller comparison (scope, license, and
+what each does and doesn't cover) that informed this book's own scope.

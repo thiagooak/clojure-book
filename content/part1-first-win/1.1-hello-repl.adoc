@@ -1,0 +1,56 @@
+[#ch-1-1-hello-repl]
+= Hello, REPL
+
+Open a terminal and run:
+
+[source,shell]
+----
+clojure
+----
+
+After a moment you should see a prompt that looks like this:
+
+[source,clojure-repl]
+----
+Clojure 1.12.1
+user=>
+----
+
+You're now talking directly to a running Clojure process. This is the REPL — Read, Eval, Print, Loop. It reads what you type, evaluates it, prints the result, and loops back to read more. If you've used Python's or Ruby's interactive shell, or a JavaScript console, the shape will feel familiar. If you haven't, here's the whole idea in one sentence: instead of writing a program, running it, and reading whatever it printed, you have a conversation with a live program, one expression at a time.
+
+Try a few things:
+
+[source,clojure-repl]
+----
+user=> (+ 1 2)
+3
+user=> (str "Hello, " "World!")
+"Hello, World!"
+user=> (* 6 7)
+42
+----
+
+Don't worry yet about _why_ `+` comes before its arguments, or what those parentheses are really doing — that's the whole subject of <<ch-2-1-syntax,Part 2>>. Right now, just notice the rhythm: you type an expression, press Enter, and immediately see a result. No compile step, no separate "run" command, no switching windows to see output. That immediacy is the thing to get a feel for before anything else.
+
+Define something and use it later:
+
+[source,clojure-repl]
+----
+user=> (def favorite-number 27)
+#'user/favorite-number
+user=> (* favorite-number 2)
+54
+----
+
+The REPL remembers everything you've defined for as long as it keeps running, the same way a running program keeps its variables in memory. Quit it (`Ctrl+D`, or `(System/exit 0)`) and that's gone — which is exactly why, starting in the next chapter, you'll keep your code in files as well as typing it at a prompt.
+
+== Connecting your editor
+
+Running `clojure` in a bare terminal works, but it's not how you'll actually use a REPL day to day. Go back to whichever editor you set up in <<ch-0-2-install,0.2>> and start a REPL from inside it instead:
+
+* **Calva**: open the Command Palette (`Cmd/Ctrl+Shift+P`) and run "Calva: Start a Project REPL and Connect".
+* **Cursive** / **CIDER**: see <<ch-a-editor-setup,Appendix A>> for the exact steps.
+
+Once connected, create a new file called `scratch.clj`, type the same three expressions from above into it, and evaluate each one from the editor (in Calva, place your cursor at the end of a form and press `Ctrl+Enter`). You should see the same results appear inline or in an output pane, without ever leaving your editor or touching a terminal.
+
+This is the workflow you'll use for the rest of the book: code lives in a file, but you send it to a running REPL piece by piece as you write it, rather than re-running the whole file from scratch every time you make a change. Get comfortable with that loop now — momentum, not mastery, is the goal of this chapter. Real syntax starts in <<ch-2-1-syntax,Part 2>>; next, in <<ch-1-2-hello-program,1.2>>, you'll turn a file into a proper runnable project.

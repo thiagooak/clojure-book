@@ -16,7 +16,7 @@ jobs:
           ruby-version: "3.3"
 
       - name: Install Asciidoctor
-        run: gem install asciidoctor
+        run: gem install asciidoctor rouge
 
       - name: Build book
         run: ./tools/build.sh

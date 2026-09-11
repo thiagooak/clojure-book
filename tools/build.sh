@@ -9,7 +9,7 @@ mkdir -p build
 # brew install asciidoctor && gem install rouge
 asciidoctor \
   --failure-level=WARN \
-  -o build/book.html \
+  -o build/index.html \
   book.adoc
 
-echo "Built build/book.html"
+echo "Built build/index.html"

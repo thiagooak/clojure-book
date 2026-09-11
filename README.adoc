@@ -33,8 +33,8 @@ To build a local HTML copy:
 
 [source,shell]
 ----
-gem install --user-install asciidoctor   # one-time
-tools/build.sh                           # renders build/book.html
+gem install --user-install asciidoctor rouge   # one-time
+tools/build.sh                                 # renders build/index.html
 ----
 
 == Repository layout
